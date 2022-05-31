@@ -1,6 +1,8 @@
 use byteorder::*;
 use std::slice;
 
+use crate::direct_volume_reader::NtfsFileReader;
+
 pub const MFT_RECORD_SIZE : usize = 1024;
 
 pub fn enumerate_mft_records(buffer : &[u8]) {
@@ -124,6 +126,9 @@ pub fn read_single_mft_record(record : &[u8]) {
 
                             // Decode the runs
                             let mut run_offset = mapping_pairs_offset as usize;
+
+                            let mut runs : NtfsFileReader = NtfsFileReader::new(4096, file_size);
+
                             while run_offset < attribute.len() {
                                 let current_run = &attribute[run_offset..];
                                 
@@ -131,11 +136,13 @@ pub fn read_single_mft_record(record : &[u8]) {
                                     Ok((0,0,0)) => {
                                         // End of runs, break!
                                         println!("End of runs!");
+                                        println!("{:?}", runs);
                                         break;
                                     },
                                     Ok(res) => {
                                         println!("Got run! length: {:#x}  offset: {:#x}  run_size: {}", res.0, res.1, res.2);
                                         run_offset += res.2;
+                                        runs.add_run(res.1, res.0);
                                     },
                                     Err(()) => {
                                         println!("Error reading run!!");
