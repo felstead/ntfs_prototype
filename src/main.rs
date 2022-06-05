@@ -5,6 +5,8 @@ use crate::mft_parser::enumerate_mft_records;
 
 mod direct_volume_reader;
 mod mft_parser;
+mod ntfs_file_reader;
+mod common;
 
 fn main() {
 
@@ -21,7 +23,7 @@ fn main() {
 
         mft_reader.read_records_into_buffer(0, buffer_size_in_records, &mut buffer[..]).unwrap();
 
-        enumerate_mft_records(&buffer[..]);
+        enumerate_mft_records(&buffer[..], 0);
 
         // Little benchmark for reading entire MFT, on the SATA SSD it's about 450 MB/s unoptimized, on the NVMe it's about 1300MB/s unoptimized
         /*let read_start = Instant::now();

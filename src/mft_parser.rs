@@ -1,64 +1,40 @@
 use byteorder::*;
 use std::slice;
 
-use crate::direct_volume_reader::NtfsFileReader;
+use crate::ntfs_file_reader::NtfsFileReader;
+use crate::common::*;
 
-pub const MFT_RECORD_SIZE : usize = 1024;
-
-pub fn enumerate_mft_records(buffer : &[u8]) {
-    read_single_mft_record(&buffer[0..MFT_RECORD_SIZE]);
+pub struct MftStandardInformation {
 }
 
-pub fn read_single_mft_record(record : &[u8]) {
+pub struct MftFileName {
+    pub file_name : String
+}
+
+pub enum MftFileData {
+    Resident, // Not implemented
+    NonResident(NtfsFileReader)
+}
+
+#[derive(Default)]
+pub struct MftRecord {
+    pub id : i64,
+    pub standard_information : Option<MftStandardInformation>,
+    pub file_name : Option<MftFileName>,
+    pub file_data : Option<MftFileData>
+}
+
+pub fn enumerate_mft_records(buffer : &[u8], record_id_start : i64) {
+    read_single_mft_record(&buffer[0..MFT_RECORD_SIZE], record_id_start);
+}
+
+pub fn read_single_mft_record(record : &[u8], record_id : i64) -> Result<Option<MftRecord>, String> {
     // Now we have a buffer, we can operate on it safely
     // This can also be done unsafely by plonking structs on top of it, but the whole point of Rust is to be safe, so ¯\_(ツ)_/¯
     // Struct plonking using something like this may be faster, but need to measure:
     // let header = buffer.as_ptr().offset(MFT_RECORD_SIZE as isize) as *const FILE_RECORD_SEGMENT_HEADER;
 
-    const EXPECTED_SIGNATURE : u32 = 0x454c4946; // The ASCII string "FILE" converted to a u32
-
-    // Offsets into the FILE_RECORD_SEGMENT_HEADER structure
-    // From https://docs.microsoft.com/en-us/windows/win32/devnotes/file-record-segment-header
-    const FRSH_FIRST_ATTRIBUTE_OFFSET : usize = 20;
-    const FRSH_FLAGS_OFFSET : usize = 22;
-
-    // File record flags
-    const FILE_RECORD_SEGMENT_IN_USE : u16 = 0x01;
-    const _FILE_FILE_NAME_INDEX_PRESENT : u16 = 0x02;
-
-    // Attribute form code
-    const _FORM_CODE_RESIDENT : u8 = 0x0;
-    const FORM_CODE_NONRESIDENT : u8 = 0x1;
-
-    // Offsets into the ATTRIBUTE_RECORD_HEADER structure
-    // From https://docs.microsoft.com/en-us/windows/win32/devnotes/attribute-record-header
-    const _ARH_TYPE_CODE_OFFSET : usize = 0;
-    const ARH_FORM_CODE_OFFSET : usize = 8;
-    const ARH_RECORD_LENGTH_OFFSET : usize = 4;
-    const ARH_RES_LENGTH : usize = 24; // The offset to the end of a "resident" type header
-
-    // Non-resident attributes mark where the data for the attribute lives, which could include the data for the file
-    const ARH_NONRES_LOWEST_VCN_OFFSET : usize = 16;
-    const ARH_NONRES_HIGHEST_VCN_OFFSET : usize = 24;
-    const ARH_NONRES_MAPPING_PAIRS_OFFSET_OFFSET : usize = 32;
-    const ARH_NONRES_ALLOCATED_LENGTH_OFFSET : usize = 40;
-    const ARH_NONRES_FILE_SIZE_OFFSET : usize = 48;
-    const ARH_NONRES_VALID_DATA_LENGTH_OFFSET : usize = 56;
-
-
-
-    // From https://docs.microsoft.com/en-us/windows/win32/devnotes/attribute-record-header
-    const ATTR_STANDARD_INFORMATION : u32 = 0x10;
-    const _ATTR_ATTRIBUTE_LIST : u32 = 0x20;
-    const ATTR_FILE_NAME : u32 = 0x30;
-    const ATTR_DATA : u32 = 0x80;
-
-    // Offsets into the FILE_NAME attribute
-    // From https://docs.microsoft.com/en-us/windows/win32/devnotes/file-name
-    const FN_FILE_NAME_LENGTH_CHARS_OFFSET : usize = 0x40;
-    const FN_FILE_NAME_DATA_OFFSET : usize = 0x42;
-
-    let signature : u32 = LittleEndian::read_u32(&record[0..4]);
+     let signature : u32 = LittleEndian::read_u32(&record[0..4]);
 
     if signature == EXPECTED_SIGNATURE {
         println!("Signature was good");
@@ -71,6 +47,11 @@ pub fn read_single_mft_record(record : &[u8]) {
         println!("First attribute offset: {:#x}", first_attribute_offset);
 
         let mut attribute_offset = first_attribute_offset as usize;
+
+        let mut mft_record = MftRecord {
+            id: record_id,
+            ..Default::default()
+        };
 
         while attribute_offset < MFT_RECORD_SIZE {
             let attribute_type_code = LittleEndian::read_u32(&record[attribute_offset..attribute_offset+4]);
@@ -145,8 +126,7 @@ pub fn read_single_mft_record(record : &[u8]) {
                                         runs.add_run(res.1, res.0);
                                     },
                                     Err(()) => {
-                                        println!("Error reading run!!");
-                                        break;
+                                        return Err("Error reading run!!".to_owned());
                                     }
                                 }
                             }
@@ -156,7 +136,6 @@ pub fn read_single_mft_record(record : &[u8]) {
                         println!("Unhandled attribute type: {:#x}", attribute_type_code);
                     }
                 }
-
             } else {
                 println!("Read invalid attribute record size of {}, skipping the rest of the record", record_length);
                 break;
@@ -164,6 +143,12 @@ pub fn read_single_mft_record(record : &[u8]) {
 
             attribute_offset += record_length as usize;
         }
+        Ok(Some(mft_record))
+    } else if signature == 0 {
+        Ok(None)
+    } else {
+        // Bad/corrupt signature
+        Err(format!("Signature was corrupt, expected 0x{:#x} got 0x{:#x}", EXPECTED_SIGNATURE, signature))
     }
 }
 
