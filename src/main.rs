@@ -1,5 +1,5 @@
 
-use std::time::{Duration, Instant};
+use std::time::{Instant};
 use std::collections::HashMap;
 
 use crate::mft_parser::{enumerate_mft_records, FileUsageStatus, FileType };

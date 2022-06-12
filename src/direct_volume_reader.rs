@@ -1,8 +1,8 @@
 use windows_sys::{
     Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE, CloseHandle, GetLastError},
-    Win32::Storage::FileSystem::{FILE_GENERIC_READ,FILE_SHARE_READ,FILE_SHARE_WRITE,OPEN_EXISTING,CreateFileA,ReadFile},
+    Win32::Storage::FileSystem::{FILE_GENERIC_READ,FILE_SHARE_READ,FILE_SHARE_WRITE,OPEN_EXISTING,CreateFileA},
     Win32::System::Ioctl::{NTFS_VOLUME_DATA_BUFFER,FSCTL_GET_NTFS_VOLUME_DATA},
-    Win32::System::IO::{OVERLAPPED,OVERLAPPED_0,OVERLAPPED_0_0,DeviceIoControl}
+    Win32::System::IO::{DeviceIoControl}
 };
 
 use std::ffi::{CString, c_void};

@@ -15,14 +15,14 @@ pub struct NtfsFileReader {
     local_offset_runs : Vec<Range<i64>>,
     last_local_offset : i64,
     cluster_size : i64,
-    actual_file_size : i64
+    _actual_file_size : i64
 }
 
 impl NtfsFileReader {
     pub fn new(cluster_size : i64, actual_file_size : i64) -> Self {
         NtfsFileReader { 
             cluster_size: cluster_size,
-            actual_file_size: actual_file_size,
+            _actual_file_size: actual_file_size,
             ..Default::default()
        }
     }

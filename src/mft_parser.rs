@@ -14,7 +14,7 @@ pub struct MftFileName {
 }
 
 pub enum MftFileData {
-    Resident, // Not implemented
+    _Resident, // Not implemented
     NonResident(NtfsFileReader)
 }
 
@@ -83,7 +83,7 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
 
         let flags : u16 = LittleEndian::read_u16(&record[FRSH_FLAGS_OFFSET..FRSH_FLAGS_OFFSET+2]);
 
-        let mut file_usage_status = match flags {
+        let file_usage_status = match flags {
             FILE_RECORD_FLAG_DELETED_FILE | FILE_RECORD_FLAG_DELETED_DIR => FileUsageStatus::Deleted,
             FILE_RECORD_FLAG_EXISTING_FILE | FILE_RECORD_FLAG_EXISTING_DIR => FileUsageStatus::InUse,
             _ => FileUsageStatus::Unknown
@@ -146,14 +146,14 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
                         let formcode : u8 = attribute[ARH_FORM_CODE_OFFSET];
                         //println!("Data form code: {}", formcode);
                         if formcode == FORM_CODE_NONRESIDENT {
-                            let lowest_vcn = LittleEndian::read_u64(&attribute[ARH_NONRES_LOWEST_VCN_OFFSET..ARH_NONRES_LOWEST_VCN_OFFSET+8]);
-                            let highest_vcn = LittleEndian::read_u64(&attribute[ARH_NONRES_HIGHEST_VCN_OFFSET..ARH_NONRES_HIGHEST_VCN_OFFSET+8]);
+                            let _lowest_vcn = LittleEndian::read_u64(&attribute[ARH_NONRES_LOWEST_VCN_OFFSET..ARH_NONRES_LOWEST_VCN_OFFSET+8]);
+                            let _highest_vcn = LittleEndian::read_u64(&attribute[ARH_NONRES_HIGHEST_VCN_OFFSET..ARH_NONRES_HIGHEST_VCN_OFFSET+8]);
 
                             let mapping_pairs_offset = LittleEndian::read_u16(&attribute[ARH_NONRES_MAPPING_PAIRS_OFFSET_OFFSET..ARH_NONRES_MAPPING_PAIRS_OFFSET_OFFSET+2]);
 
-                            let allocated_length = LittleEndian::read_i64(&attribute[ARH_NONRES_ALLOCATED_LENGTH_OFFSET..ARH_NONRES_ALLOCATED_LENGTH_OFFSET+8]);
+                            let _allocated_length = LittleEndian::read_i64(&attribute[ARH_NONRES_ALLOCATED_LENGTH_OFFSET..ARH_NONRES_ALLOCATED_LENGTH_OFFSET+8]);
                             let file_size = LittleEndian::read_i64(&attribute[ARH_NONRES_FILE_SIZE_OFFSET..ARH_NONRES_FILE_SIZE_OFFSET+8]);
-                            let valid_data_length = LittleEndian::read_i64(&attribute[ARH_NONRES_VALID_DATA_LENGTH_OFFSET..ARH_NONRES_VALID_DATA_LENGTH_OFFSET+8]);
+                            let _valid_data_length = LittleEndian::read_i64(&attribute[ARH_NONRES_VALID_DATA_LENGTH_OFFSET..ARH_NONRES_VALID_DATA_LENGTH_OFFSET+8]);
 
                             //println!("LVCN: {}  HVCN: {}", lowest_vcn, highest_vcn);
                             //println!("Allocated length: {}  File size: {}  Valid data len: {}", allocated_length, file_size, valid_data_length);
