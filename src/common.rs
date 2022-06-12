@@ -10,8 +10,10 @@ pub const FRSH_FIRST_ATTRIBUTE_OFFSET : usize = 20;
 pub const FRSH_FLAGS_OFFSET : usize = 22;
 
 // File record flags
-pub const FILE_RECORD_SEGMENT_IN_USE : u16 = 0x01;
-pub const _FILE_FILE_NAME_INDEX_PRESENT : u16 = 0x02;
+pub const FILE_RECORD_FLAG_DELETED_FILE : u16 = 0x00;
+pub const FILE_RECORD_FLAG_EXISTING_FILE : u16 = 0x01;
+pub const FILE_RECORD_FLAG_DELETED_DIR : u16 = 0x02;
+pub const FILE_RECORD_FLAG_EXISTING_DIR : u16 = 0x03;
 
 // Attribute form code
 pub const _FORM_CODE_RESIDENT : u8 = 0x0;

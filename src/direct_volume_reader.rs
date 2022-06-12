@@ -19,7 +19,7 @@ pub struct DirectVolumeMftReader {
     volume_handle : HANDLE,
     ntfs_volume_data : NTFS_VOLUME_DATA_BUFFER,
     is_open : bool,
-    mft_reader : NtfsFileReader,
+    mft_file_reader : NtfsFileReader,
 }
 
 impl Default for DirectVolumeMftReader {
@@ -31,7 +31,7 @@ impl Default for DirectVolumeMftReader {
             volume_handle: HANDLE::default(), 
             ntfs_volume_data: unsafe { std::mem::MaybeUninit::<NTFS_VOLUME_DATA_BUFFER>::zeroed().assume_init() },
             is_open: false,
-            mft_reader: NtfsFileReader::default()
+            mft_file_reader: NtfsFileReader::default()
         }
     }
 }
@@ -102,7 +102,7 @@ impl DirectVolumeMftReader {
             CreateFileA(
                 volume_path_cstr.as_ptr() as *const u8,
                 FILE_GENERIC_READ,
-                FILE_SHARE_READ | FILE_SHARE_WRITE, // This actually means other processes CAN read and write
+                FILE_SHARE_READ | FILE_SHARE_WRITE, // This actually means other processes CAN read and write the file, i.e. not exclusive locking
                 std::ptr::null(),
                 OPEN_EXISTING,
                 0,
@@ -137,33 +137,20 @@ impl DirectVolumeMftReader {
             return Err(format!("DeviceIoControl error: {:#x}", unsafe { GetLastError() }));
         }
 
-        // Now we need to read the record from the MFT to determine the MFT layout
+        // Now we need to read the $MFT record (first record) from the MFT to determine the physical MFT file layout,
+        // that is, its layout on the disk - the MFT needn't necessarily be contiguous, it is often split across
+        // multiple runs.
+        // What we do here is initialize our NtfsFileReader with an initial known run so we can leverage that to get
+        // the first MFT record
+        let mut bootstrapped_mft_file_reader = NtfsFileReader::new(self.ntfs_volume_data.BytesPerCluster.into(), self.ntfs_volume_data.BytesPerCluster.into());
+        bootstrapped_mft_file_reader.add_run(self.ntfs_volume_data.Mft2StartLcn, 1);
+
         let mut mft_record_buffer : [u8 ; MFT_RECORD_SIZE] = [0 ; MFT_RECORD_SIZE];
-        
-        let mut overlapped  = OVERLAPPED {
-            Anonymous: OVERLAPPED_0 {
-                Anonymous: OVERLAPPED_0_0 {
-                    Offset: self.get_mft_start_offset_bytes() as u32,
-                    OffsetHigh: (self.get_mft_start_offset_bytes() >> 32) as u32
-                },
-            },
-            hEvent: 0,
-            Internal: 0,
-            InternalHigh: 0,
-        };
 
-        let read_result = unsafe {
-            ReadFile(
-                self.volume_handle,
-                mft_record_buffer.as_mut_ptr() as *mut c_void,
-                mft_record_buffer.len() as u32,
-                std::ptr::null_mut(),
-                std::ptr::addr_of_mut!(overlapped)
-            )
-        };
+        let bytes_read = bootstrapped_mft_file_reader.read_file_bytes(0, MFT_RECORD_SIZE, &mut mft_record_buffer[..], self.volume_handle)?;
 
-        if read_result == 0 {
-            return Err(format!("ReadFile error while reading MFT record! {:#x}", unsafe { GetLastError() }));
+        if bytes_read != MFT_RECORD_SIZE {
+            return Err(format!("Read invalid number of bytes for MFT record, expected {}, got {}", MFT_RECORD_SIZE, bytes_read));
         }
 
         let mft_record_result = read_single_mft_record(&mft_record_buffer, 0)?;
@@ -173,7 +160,7 @@ impl DirectVolumeMftReader {
                 if mft_file_name.file_name != "$MFT" {
                     return Err(format!("MFT file_name was not $MFT, got '{}' instead!", mft_file_name.file_name))
                 }
-                self.mft_reader = mft_file_reader
+                self.mft_file_reader = mft_file_reader
             },
             _ => {
                 return Err("MFT record data was missing!".to_owned())
@@ -183,7 +170,7 @@ impl DirectVolumeMftReader {
         Ok(())
     }
 
-    pub fn read_records_into_buffer(&self, first_record_id : i64, num_records : usize, buffer : &mut [u8]) -> Result<u64, String> {
+    pub fn read_records_into_buffer(&self, first_record_id : i64, num_records : usize, buffer : &mut [u8]) -> Result<usize, String> {
         if !self.is_open {
             return Err("MFT was not opened!".to_owned())
         }
@@ -198,36 +185,8 @@ impl DirectVolumeMftReader {
             return Err(format!("Tried to request records beyond end of MFT, requested record {}, max is {}", max_requested_record_id, self.get_max_number_of_records()))
         }
 
-        let read_offset = self.get_mft_start_offset_bytes() + (first_record_id * MFT_RECORD_SIZE as i64);
-        let mut overlapped  = OVERLAPPED {
-            Anonymous: OVERLAPPED_0 {
-                Anonymous: OVERLAPPED_0_0 {
-                    Offset: read_offset as u32,
-                    OffsetHigh: (read_offset >> 32) as u32
-                },
-            },
-            hEvent: 0,
-            Internal: 0,
-            InternalHigh: 0,
-        };
-
-
-        let read_result = unsafe {
-            ReadFile(
-                self.volume_handle,
-                buffer.as_mut_ptr() as *mut c_void,
-                buffer.len() as u32,
-                std::ptr::null_mut(),
-                std::ptr::addr_of_mut!(overlapped)
-            )
-        };
-
-        if read_result == 0 {
-            return Err(format!("ReadFile error: {:#x}", unsafe { GetLastError() }));
-        }
-
-
-        Ok(0)
+        // TODO: Use nfts_file_reader here
+        self.mft_file_reader.read_file_bytes(first_record_id * MFT_RECORD_SIZE as i64, num_records * MFT_RECORD_SIZE, buffer, self.volume_handle)
     }
 
 }

@@ -1,7 +1,8 @@
 
-//use std::time::{Duration, Instant};
+use std::time::{Duration, Instant};
+use std::collections::HashMap;
 
-use crate::mft_parser::enumerate_mft_records;
+use crate::mft_parser::{enumerate_mft_records, FileUsageStatus, FileType };
 
 mod direct_volume_reader;
 mod mft_parser;
@@ -17,13 +18,52 @@ fn main() {
     
         println!("MFT byte offset: {:#x}  Size: {}", mft_reader.get_mft_start_offset_bytes(), mft_reader.get_mft_size_bytes());
 
-        let buffer_size_in_records : usize = 1024;
+        let buffer_size_in_records : usize = 65536;
 
         let mut buffer = vec![0 as u8; 1024 * buffer_size_in_records].into_boxed_slice();
 
+        let read_start = Instant::now();
         mft_reader.read_records_into_buffer(0, buffer_size_in_records, &mut buffer[..]).unwrap();
+        let read_time = read_start.elapsed();
 
-        enumerate_mft_records(&buffer[..], 0);
+        let mut directories = HashMap::<u64, String>::new();
+
+        let enumerate_start = Instant::now();
+        enumerate_mft_records(&buffer[..], 0, |record_id, read_result| {
+            match read_result {
+                Ok(Some(record )) => {
+                    //println!("# {}: Type: {:?}  Status: {:?} => File name: {}", record_id, record.file_type, record.usage_status, record.file_name.unwrap_or_default().file_name)
+                    if record.usage_status == FileUsageStatus::InUse {
+                        match record.file_type {
+                            FileType::File => {
+                                // Skip
+                            },
+                            FileType::Directory => {
+                                directories.insert(record.id, record.file_name.unwrap_or_default().file_name);
+
+                                //let file_name = record.file_name.as_ref();
+                                /*if record.file_name.is_some() {
+                                    println!("Directory {} with parent {} -> parent name: {:?}", 
+                                        record.file_name.unwrap_or_default().file_name, 
+                                        record.file_name.unwrap_or_default().parent_dir_id, 
+                                        directories.get(&record.file_name.unwrap_or_default().parent_dir_id))
+                                }*/
+                                
+                            },
+                            _ => {}
+                        }
+                    }
+                },
+                Ok(None) => {
+                    //println!("# {}: Empty, skipping", record_id)
+                }
+                Err(err) => println!("# {}: Error: {}", record_id, err)
+            }
+        });
+
+        let enumerate_time = enumerate_start.elapsed();
+
+        println!("Read time: {:?}  Enumerate time: {:?}", read_time, enumerate_time);
 
         // Little benchmark for reading entire MFT, on the SATA SSD it's about 450 MB/s unoptimized, on the NVMe it's about 1300MB/s unoptimized
         /*let read_start = Instant::now();

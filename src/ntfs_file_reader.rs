@@ -46,7 +46,8 @@ impl NtfsFileReader {
         //println!("{:?}", self);
     }
 
-    pub fn iterate_physical_blocks_for_file(&self, file_relative_offset : i64, num_bytes : usize, mut block_reader: impl FnMut(i64, Range<i64>) -> Result<usize, String>) -> Result<usize, String> {
+    // Special internal iterator function that allows us to iterate over a file's physical segments within the passed range
+    fn iterate_physical_blocks_for_file(&self, file_relative_offset : i64, num_bytes : usize, mut block_reader: impl FnMut(i64, Range<i64>) -> Result<usize, String>) -> Result<usize, String> {
         // Start at our first offset and read as many runs as are required to fill our buffer
         let mut target_range = file_relative_offset .. file_relative_offset + num_bytes as i64;
         let mut buffer_offset : usize = 0;
@@ -86,7 +87,7 @@ impl NtfsFileReader {
     // This function will read chunks of a file into the provided buffer directly from the disk, taking into account the file runs
     pub fn read_file_bytes(&self, file_relative_offset : i64, num_bytes : usize, buffer : &mut [u8], volume_handle: HANDLE) -> Result<usize, String> {
 
-        if num_bytes < buffer.len() {
+        if num_bytes > buffer.len() {
             return Err(format!("Requested to read {} bytes into buffer of size {}", num_bytes, buffer.len()));
         }
 
@@ -104,11 +105,6 @@ impl NtfsFileReader {
                 InternalHigh: 0,
             };
     
-            let buffer_read_end = buffer_offset + physical_read_range.end - physical_read_range.start;
-            if buffer_read_end >= buffer.len() as i64 {
-                return Err(format!("Requested to read to index {} of buffer of size {}", buffer_read_end, buffer.len()));
-            }
-
             let read_result = unsafe {
                 ReadFile(
                     volume_handle,

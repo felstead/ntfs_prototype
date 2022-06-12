@@ -7,8 +7,10 @@ use crate::common::*;
 pub struct MftStandardInformation {
 }
 
+#[derive(Default)]
 pub struct MftFileName {
-    pub file_name : String
+    pub file_name : String,
+    pub parent_dir_id : u64
 }
 
 pub enum MftFileData {
@@ -16,19 +18,59 @@ pub enum MftFileData {
     NonResident(NtfsFileReader)
 }
 
+#[derive(Debug, PartialEq)]
+pub enum FileUsageStatus {
+    Unknown,
+    InUse,
+    Deleted
+}
+
+impl Default for FileUsageStatus {
+    fn default() -> Self {
+        FileUsageStatus::Unknown
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum FileType {
+    Unknown,
+    File,
+    Directory
+}
+
+impl Default for FileType {
+    fn default() -> Self {
+        FileType::Unknown
+    }
+}
+
 #[derive(Default)]
 pub struct MftRecord {
-    pub id : i64,
+    pub id : u64,
+    pub file_type : FileType,
+    pub usage_status : FileUsageStatus,
     pub standard_information : Option<MftStandardInformation>,
     pub file_name : Option<MftFileName>,
     pub file_data : Option<MftFileData>
 }
 
-pub fn enumerate_mft_records(buffer : &[u8], record_id_start : i64) {
-    read_single_mft_record(&buffer[0..MFT_RECORD_SIZE], record_id_start);
+pub fn enumerate_mft_records(buffer : &[u8], record_id_start : u64, mut reader_func: impl FnMut(u64, Result<Option<MftRecord>, String>)) {
+    let mut offset = 0;
+    let max_offset = buffer.len() - MFT_RECORD_SIZE;
+    let mut current_record_id = record_id_start;
+    while offset < max_offset
+    {
+        let mft_record_result= read_single_mft_record(&buffer[offset..offset+MFT_RECORD_SIZE], current_record_id);
+
+        reader_func(current_record_id, mft_record_result);
+
+        offset += MFT_RECORD_SIZE;
+        current_record_id += 1;
+    }
+    
 }
 
-pub fn read_single_mft_record(record : &[u8], record_id : i64) -> Result<Option<MftRecord>, String> {
+pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<MftRecord>, String> {
     // Now we have a buffer, we can operate on it safely
     // This can also be done unsafely by plonking structs on top of it, but the whole point of Rust is to be safe, so ¯\_(ツ)_/¯
     // Struct plonking using something like this may be faster, but need to measure:
@@ -37,21 +79,34 @@ pub fn read_single_mft_record(record : &[u8], record_id : i64) -> Result<Option<
      let signature : u32 = LittleEndian::read_u32(&record[0..4]);
 
     if signature == EXPECTED_SIGNATURE {
-        println!("Signature was good");
+        //println!("Record {:#x}: Signature was good", record_id);
 
         let flags : u16 = LittleEndian::read_u16(&record[FRSH_FLAGS_OFFSET..FRSH_FLAGS_OFFSET+2]);
-        let _file_in_use = flags & FILE_RECORD_SEGMENT_IN_USE > 0;
 
-        let first_attribute_offset = LittleEndian::read_u16(&record[FRSH_FIRST_ATTRIBUTE_OFFSET..FRSH_FIRST_ATTRIBUTE_OFFSET+4]);
+        let mut file_usage_status = match flags {
+            FILE_RECORD_FLAG_DELETED_FILE | FILE_RECORD_FLAG_DELETED_DIR => FileUsageStatus::Deleted,
+            FILE_RECORD_FLAG_EXISTING_FILE | FILE_RECORD_FLAG_EXISTING_DIR => FileUsageStatus::InUse,
+            _ => FileUsageStatus::Unknown
+        };
 
-        println!("First attribute offset: {:#x}", first_attribute_offset);
-
-        let mut attribute_offset = first_attribute_offset as usize;
+        let file_type = match flags {
+            FILE_RECORD_FLAG_DELETED_DIR | FILE_RECORD_FLAG_EXISTING_DIR => FileType::Directory,
+            FILE_RECORD_FLAG_DELETED_FILE | FILE_RECORD_FLAG_EXISTING_FILE => FileType::File,
+            _ => FileType::Unknown
+        };
 
         let mut mft_record = MftRecord {
             id: record_id,
+            usage_status: file_usage_status,
+            file_type: file_type,
             ..Default::default()
         };
+
+        let first_attribute_offset = LittleEndian::read_u16(&record[FRSH_FIRST_ATTRIBUTE_OFFSET..FRSH_FIRST_ATTRIBUTE_OFFSET+4]);
+
+        //println!("First attribute offset: {:#x}", first_attribute_offset);
+
+        let mut attribute_offset = first_attribute_offset as usize;
 
         while attribute_offset < MFT_RECORD_SIZE {
             let attribute_type_code = LittleEndian::read_u32(&record[attribute_offset..attribute_offset+4]);
@@ -59,7 +114,7 @@ pub fn read_single_mft_record(record : &[u8], record_id : i64) -> Result<Option<
                 break;
             }
             let record_length = LittleEndian::read_u32(&record[attribute_offset+ARH_RECORD_LENGTH_OFFSET..attribute_offset+ARH_RECORD_LENGTH_OFFSET+4]) as usize;
-            println!("Reading attribute at offset {:#x}-{:#x}, type code {:#x}, record length: {}", attribute_offset, attribute_offset + record_length, attribute_type_code, record_length);
+            //println!("Reading attribute at offset {:#x}-{:#x}, type code {:#x}, record length: {}", attribute_offset, attribute_offset + record_length, attribute_type_code, record_length);
 
             if record_length > 0 && record_length <= MFT_RECORD_SIZE {
 
@@ -82,14 +137,14 @@ pub fn read_single_mft_record(record : &[u8], record_id : i64) -> Result<Option<
                         // This is "unsafe" but it really isn't assuming the slice is good
                         let file_name_data_utf16 = unsafe { slice::from_raw_parts(file_name_data_bytes.as_ptr() as *const u16, file_name_length) };
 
-                        let file_name = String::from_utf16_lossy(file_name_data_utf16);
-                        println!("File name {}   Parent dir: {}", file_name, parent_directory_id);
-
-                        //file_names.push(file_name);
+                        mft_record.file_name = Some(MftFileName {
+                            file_name : String::from_utf16_lossy(file_name_data_utf16),
+                            parent_dir_id : parent_directory_id
+                        });
                     },
                     ATTR_DATA => {
                         let formcode : u8 = attribute[ARH_FORM_CODE_OFFSET];
-                        println!("Data form code: {}", formcode);
+                        //println!("Data form code: {}", formcode);
                         if formcode == FORM_CODE_NONRESIDENT {
                             let lowest_vcn = LittleEndian::read_u64(&attribute[ARH_NONRES_LOWEST_VCN_OFFSET..ARH_NONRES_LOWEST_VCN_OFFSET+8]);
                             let highest_vcn = LittleEndian::read_u64(&attribute[ARH_NONRES_HIGHEST_VCN_OFFSET..ARH_NONRES_HIGHEST_VCN_OFFSET+8]);
@@ -100,10 +155,10 @@ pub fn read_single_mft_record(record : &[u8], record_id : i64) -> Result<Option<
                             let file_size = LittleEndian::read_i64(&attribute[ARH_NONRES_FILE_SIZE_OFFSET..ARH_NONRES_FILE_SIZE_OFFSET+8]);
                             let valid_data_length = LittleEndian::read_i64(&attribute[ARH_NONRES_VALID_DATA_LENGTH_OFFSET..ARH_NONRES_VALID_DATA_LENGTH_OFFSET+8]);
 
-                            println!("LVCN: {}  HVCN: {}", lowest_vcn, highest_vcn);
-                            println!("Allocated length: {}  File size: {}  Valid data len: {}", allocated_length, file_size, valid_data_length);
+                            //println!("LVCN: {}  HVCN: {}", lowest_vcn, highest_vcn);
+                            //println!("Allocated length: {}  File size: {}  Valid data len: {}", allocated_length, file_size, valid_data_length);
 
-                            println!("Mapping pairs offset: {:#x}", mapping_pairs_offset);
+                            //println!("Mapping pairs offset: {:#x}", mapping_pairs_offset);
 
                             // Decode the runs
                             let mut run_offset = mapping_pairs_offset as usize;
@@ -116,12 +171,12 @@ pub fn read_single_mft_record(record : &[u8], record_id : i64) -> Result<Option<
                                 match read_run(current_run) {
                                     Ok((0,0,0)) => {
                                         // End of runs, break!
-                                        println!("End of runs!");
-                                        println!("{:?}", runs);
+                                        //println!("End of runs!");
+                                        //println!("{:?}", runs);
                                         break;
                                     },
                                     Ok(res) => {
-                                        println!("Got run! length: {:#x}  offset: {:#x}  run_size: {}", res.0, res.1, res.2);
+                                        //println!("Got run! length: {:#x}  offset: {:#x}  run_size: {}", res.0, res.1, res.2);
                                         run_offset += res.2;
                                         runs.add_run(res.1, res.0);
                                     },
@@ -130,10 +185,12 @@ pub fn read_single_mft_record(record : &[u8], record_id : i64) -> Result<Option<
                                     }
                                 }
                             }
+
+                            mft_record.file_data = Some(MftFileData::NonResident(runs));
                         }
                     },
                     _ => {
-                        println!("Unhandled attribute type: {:#x}", attribute_type_code);
+                        //println!("Unhandled attribute type: {:#x}", attribute_type_code);
                     }
                 }
             } else {
@@ -143,6 +200,7 @@ pub fn read_single_mft_record(record : &[u8], record_id : i64) -> Result<Option<
 
             attribute_offset += record_length as usize;
         }
+
         Ok(Some(mft_record))
     } else if signature == 0 {
         Ok(None)
