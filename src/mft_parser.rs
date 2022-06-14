@@ -8,12 +8,12 @@ pub struct MftStandardInformation {
 }
 
 #[derive(Default)]
-pub struct MftFileName {
+pub struct MftFileNameInfo {
     pub file_name : String,
     pub parent_dir_id : u64
 }
 
-pub enum MftFileData {
+pub enum MftFileDataInfo {
     _Resident, // Not implemented
     NonResident(NtfsFileReader)
 }
@@ -50,8 +50,8 @@ pub struct MftRecord {
     pub file_type : FileType,
     pub usage_status : FileUsageStatus,
     pub standard_information : Option<MftStandardInformation>,
-    pub file_name : Option<MftFileName>,
-    pub file_data : Option<MftFileData>
+    pub file_name_info : Option<MftFileNameInfo>,
+    pub file_data_info : Option<MftFileDataInfo>
 }
 
 pub fn enumerate_mft_records(buffer : &[u8], record_id_start : u64, mut reader_func: impl FnMut(u64, Result<Option<MftRecord>, String>)) {
@@ -137,7 +137,7 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
                         // This is "unsafe" but it really isn't assuming the slice is good
                         let file_name_data_utf16 = unsafe { slice::from_raw_parts(file_name_data_bytes.as_ptr() as *const u16, file_name_length) };
 
-                        mft_record.file_name = Some(MftFileName {
+                        mft_record.file_name_info = Some(MftFileNameInfo {
                             file_name : String::from_utf16_lossy(file_name_data_utf16),
                             parent_dir_id : parent_directory_id
                         });
@@ -186,7 +186,7 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
                                 }
                             }
 
-                            mft_record.file_data = Some(MftFileData::NonResident(runs));
+                            mft_record.file_data_info = Some(MftFileDataInfo::NonResident(runs));
                         }
                     },
                     _ => {

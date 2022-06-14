@@ -156,7 +156,7 @@ impl DirectVolumeMftReader {
         let mft_record_result = read_single_mft_record(&mft_record_buffer, 0)?;
 
         match mft_record_result {
-            Some(MftRecord { file_name : Some(mft_file_name), file_data : Some(MftFileData::NonResident(mft_file_reader)), .. }) => {
+            Some(MftRecord { file_name_info : Some(mft_file_name), file_data_info : Some(MftFileDataInfo::NonResident(mft_file_reader)), .. }) => {
                 if mft_file_name.file_name != "$MFT" {
                     return Err(format!("MFT file_name was not $MFT, got '{}' instead!", mft_file_name.file_name))
                 }
@@ -185,7 +185,6 @@ impl DirectVolumeMftReader {
             return Err(format!("Tried to request records beyond end of MFT, requested record {}, max is {}", max_requested_record_id, self.get_max_number_of_records()))
         }
 
-        // TODO: Use nfts_file_reader here
         self.mft_file_reader.read_file_bytes(first_record_id * MFT_RECORD_SIZE as i64, num_records * MFT_RECORD_SIZE, buffer, self.volume_handle)
     }
 

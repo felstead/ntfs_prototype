@@ -104,12 +104,12 @@ impl NtfsFileReader {
                 Internal: 0,
                 InternalHigh: 0,
             };
-    
+
             let read_result = unsafe {
                 ReadFile(
                     volume_handle,
                     buffer[buffer_offset as usize..].as_mut_ptr() as *mut c_void,
-                    buffer.len() as u32,
+                    (buffer.len() - buffer_offset as usize) as u32,
                     std::ptr::null_mut(),
                     std::ptr::addr_of_mut!(overlapped)
                 )

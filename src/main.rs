@@ -18,7 +18,7 @@ fn main() {
     
         println!("MFT byte offset: {:#x}  Size: {}", mft_reader.get_mft_start_offset_bytes(), mft_reader.get_mft_size_bytes());
 
-        let buffer_size_in_records : usize = 65536;
+        let buffer_size_in_records : usize = 500000;
 
         let mut buffer = vec![0 as u8; 1024 * buffer_size_in_records].into_boxed_slice();
 
@@ -39,10 +39,18 @@ fn main() {
                                 // Skip
                             },
                             FileType::Directory => {
-                                directories.insert(record.id, record.file_name.unwrap_or_default().file_name);
+                                match record.file_name_info.as_ref() {
+                                    Some(filename) => {
+                                        directories.insert(record.id, filename.file_name.to_owned());
+                                        //println!("Directory {} with parent {} -> parent name: {:?}",  filename.file_name, filename.parent_dir_id, directories.get(&filename.parent_dir_id));
+                                    },
+                                    _ => {}
+                                }
+
+                                /*directories.insert(record.id, record.file_name.unwrap_or_default().file_name);
 
                                 //let file_name = record.file_name.as_ref();
-                                /*if record.file_name.is_some() {
+                                if record.file_name.is_some() {
                                     println!("Directory {} with parent {} -> parent name: {:?}", 
                                         record.file_name.unwrap_or_default().file_name, 
                                         record.file_name.unwrap_or_default().parent_dir_id, 
@@ -64,6 +72,7 @@ fn main() {
         let enumerate_time = enumerate_start.elapsed();
 
         println!("Read time: {:?}  Enumerate time: {:?}", read_time, enumerate_time);
+        //println!("Directories: {:#?}", directories);
 
         // Little benchmark for reading entire MFT, on the SATA SSD it's about 450 MB/s unoptimized, on the NVMe it's about 1300MB/s unoptimized
         /*let read_start = Instant::now();
