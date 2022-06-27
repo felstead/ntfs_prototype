@@ -6,6 +6,7 @@ use crate::mft_parser::{enumerate_mft_records, FileUsageStatus, FileType };
 
 mod direct_volume_reader;
 mod mft_parser;
+mod mft_types;
 mod ntfs_file_reader;
 mod common;
 
@@ -14,13 +15,13 @@ fn main() {
     {
         let mut mft_reader = direct_volume_reader::DirectVolumeMftReader::default();
 
-        mft_reader.open_mft("d:").unwrap();
+        mft_reader.open_mft("c:").unwrap();
     
         println!("MFT byte offset: {:#x}  Size: {}", mft_reader.get_mft_start_offset_bytes(), mft_reader.get_mft_size_bytes());
 
-        let buffer_size_in_records : usize = 500000;
+        let buffer_size_in_records : usize = 100;
 
-        let mut buffer = vec![0 as u8; 1024 * buffer_size_in_records].into_boxed_slice();
+        let mut buffer = vec![0_u8; 1024 * buffer_size_in_records].into_boxed_slice();
 
         let read_start = Instant::now();
         mft_reader.read_records_into_buffer(0, buffer_size_in_records, &mut buffer[..]).unwrap();
@@ -32,17 +33,33 @@ fn main() {
         enumerate_mft_records(&buffer[..], 0, |record_id, read_result| {
             match read_result {
                 Ok(Some(record )) => {
-                    //println!("# {}: Type: {:?}  Status: {:?} => File name: {}", record_id, record.file_type, record.usage_status, record.file_name.unwrap_or_default().file_name)
+                    println!("Record {}", record_id);
+                    match record.file_name_info.as_ref() {
+                        Some(filename) => {
+                            println!("{}", filename.get_file_name());
+                        }
+                        ,
+                        _ => {}
+                    };
+
+
                     if record.usage_status == FileUsageStatus::InUse {
                         match record.file_type {
                             FileType::File => {
-                                // Skip
+                                match record.standard_information.as_ref() {
+                                    Some(std_info) => {
+                                        println!("Created: {:#x}", std_info.get_create_timestamp().dwLowDateTime);
+                                    },
+                                    _ => {}
+                                }
                             },
                             FileType::Directory => {
                                 match record.file_name_info.as_ref() {
                                     Some(filename) => {
-                                        directories.insert(record.id, filename.file_name.to_owned());
-                                        //println!("Directory {} with parent {} -> parent name: {:?}",  filename.file_name, filename.parent_dir_id, directories.get(&filename.parent_dir_id));
+                                        let dir_name = filename.get_file_name();
+                                        println!("Directory {} with parent {} -> parent name: {:?}",  &dir_name, filename.get_parent_directory_id(), directories.get(&filename.get_parent_directory_id()));
+                                        directories.insert(record.id, dir_name);
+                                        
                                     },
                                     _ => {}
                                 }
@@ -93,6 +110,4 @@ fn main() {
 
 
     }
-
-    return;
 }

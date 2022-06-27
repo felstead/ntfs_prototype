@@ -39,8 +39,3 @@ pub const ATTR_STANDARD_INFORMATION : u32 = 0x10;
 pub const _ATTR_ATTRIBUTE_LIST : u32 = 0x20;
 pub const ATTR_FILE_NAME : u32 = 0x30;
 pub const ATTR_DATA : u32 = 0x80;
-
-// Offsets into the FILE_NAME attribute
-// From https://docs.microsoft.com/en-us/windows/win32/devnotes/file-name
-pub const FN_FILE_NAME_LENGTH_CHARS_OFFSET : usize = 0x40;
-pub const FN_FILE_NAME_DATA_OFFSET : usize = 0x42;

@@ -21,15 +21,14 @@ pub struct NtfsFileReader {
 impl NtfsFileReader {
     pub fn new(cluster_size : i64, actual_file_size : i64) -> Self {
         NtfsFileReader { 
-            cluster_size: cluster_size,
+            cluster_size,
             _actual_file_size: actual_file_size,
             ..Default::default()
        }
     }
 
     pub fn add_run(&mut self, cluster_run_start : i64, cluster_run_length : i64) {
-        //println!("{:#x} .. {:#x}", relative_run_start, run_length);
-        //println!("{:?}", self);
+        //println!("Adding run: {:#x} len {:#x}", cluster_run_start, cluster_run_length);
 
         // Convert the runs (in clusters) to actual byte offsets on disk
         let physical_run_start = (cluster_run_start * self.cluster_size) + self.last_physical_offset;
@@ -91,7 +90,7 @@ impl NtfsFileReader {
             return Err(format!("Requested to read {} bytes into buffer of size {}", num_bytes, buffer.len()));
         }
 
-        let result = self.iterate_physical_blocks_for_file(file_relative_offset, num_bytes, |buffer_offset, physical_read_range| {
+        self.iterate_physical_blocks_for_file(file_relative_offset, num_bytes, |buffer_offset, physical_read_range| {
             let read_offset = physical_read_range.start;
             let mut overlapped  = OVERLAPPED {
                 Anonymous: OVERLAPPED_0 {
@@ -120,9 +119,7 @@ impl NtfsFileReader {
             }
 
             Ok(physical_read_range.end as usize - physical_read_range.start as usize)
-        });
-
-        result
+        }) // result
     }
 
 

@@ -1,17 +1,7 @@
 use byteorder::*;
-use std::slice;
-
 use crate::ntfs_file_reader::NtfsFileReader;
 use crate::common::*;
-
-pub struct MftStandardInformation {
-}
-
-#[derive(Default)]
-pub struct MftFileNameInfo {
-    pub file_name : String,
-    pub parent_dir_id : u64
-}
+use crate::mft_types::*;
 
 pub enum MftFileDataInfo {
     _Resident, // Not implemented
@@ -45,12 +35,13 @@ impl Default for FileType {
 }
 
 #[derive(Default)]
-pub struct MftRecord {
+pub struct MftRecord<'a> {
     pub id : u64,
     pub file_type : FileType,
     pub usage_status : FileUsageStatus,
-    pub standard_information : Option<MftStandardInformation>,
-    pub file_name_info : Option<MftFileNameInfo>,
+    pub standard_information : Option<MftStandardInformation<'a>>,
+    pub file_name_info : Option<MftFileNameInfo<'a>>,
+    pub short_file_name_info : Option<MftFileNameInfo<'a>>,
     pub file_data_info : Option<MftFileDataInfo>
 }
 
@@ -83,7 +74,7 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
 
         let flags : u16 = LittleEndian::read_u16(&record[FRSH_FLAGS_OFFSET..FRSH_FLAGS_OFFSET+2]);
 
-        let file_usage_status = match flags {
+        let usage_status = match flags {
             FILE_RECORD_FLAG_DELETED_FILE | FILE_RECORD_FLAG_DELETED_DIR => FileUsageStatus::Deleted,
             FILE_RECORD_FLAG_EXISTING_FILE | FILE_RECORD_FLAG_EXISTING_DIR => FileUsageStatus::InUse,
             _ => FileUsageStatus::Unknown
@@ -97,8 +88,8 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
 
         let mut mft_record = MftRecord {
             id: record_id,
-            usage_status: file_usage_status,
-            file_type: file_type,
+            usage_status,
+            file_type,
             ..Default::default()
         };
 
@@ -107,6 +98,8 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
         //println!("First attribute offset: {:#x}", first_attribute_offset);
 
         let mut attribute_offset = first_attribute_offset as usize;
+
+        let mut is_compressed = false;
 
         while attribute_offset < MFT_RECORD_SIZE {
             let attribute_type_code = LittleEndian::read_u32(&record[attribute_offset..attribute_offset+4]);
@@ -119,28 +112,28 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
             if record_length > 0 && record_length <= MFT_RECORD_SIZE {
 
                 let attribute = &record[attribute_offset..attribute_offset+record_length];
+                let resident_attribute_slice = &attribute[ARH_RES_LENGTH..];
 
                 //println!("{:?}", attribute);
 
                 match attribute_type_code {
                     ATTR_STANDARD_INFORMATION => {
-                        // We don't really care about this
-                        //println!("Standard information: ");
+                        let std_info = MftStandardInformation::new(resident_attribute_slice);
+                        is_compressed = std_info.get_permissions() & 0x800u32 > 0;
+
+                        mft_record.standard_information = Some(std_info);
                     },
                     ATTR_FILE_NAME => {
-                        // Only the top 48 bits are the actual file reference
-                        let parent_directory_id = LittleEndian::read_u48(&attribute[ARH_RES_LENGTH..ARH_RES_LENGTH+6]);
-
-                        let file_name_length : usize = attribute[ARH_RES_LENGTH + FN_FILE_NAME_LENGTH_CHARS_OFFSET] as usize;
-                        let file_name_data_bytes = &attribute[ARH_RES_LENGTH + FN_FILE_NAME_DATA_OFFSET..ARH_RES_LENGTH + FN_FILE_NAME_DATA_OFFSET + file_name_length];
-
-                        // This is "unsafe" but it really isn't assuming the slice is good
-                        let file_name_data_utf16 = unsafe { slice::from_raw_parts(file_name_data_bytes.as_ptr() as *const u16, file_name_length) };
-
-                        mft_record.file_name_info = Some(MftFileNameInfo {
-                            file_name : String::from_utf16_lossy(file_name_data_utf16),
-                            parent_dir_id : parent_directory_id
-                        });
+                        // If there is only one FILE_NAME attribute, it is both the short and long name, if there are two, the first
+                        // is the short name and the second is the lone one
+                        if mft_record.file_name_info.is_none() {
+                            //println!("FIRST: {}", &file_name_info.get_file_name());
+                            mft_record.file_name_info = Some(MftFileNameInfo::new(resident_attribute_slice));
+                            mft_record.short_file_name_info = Some(MftFileNameInfo::new(resident_attribute_slice));
+                        } else {
+                            //println!("SECOND: {}", &file_name_info.get_file_name());
+                            mft_record.file_name_info = Some(MftFileNameInfo::new(resident_attribute_slice));
+                        }
                     },
                     ATTR_DATA => {
                         let formcode : u8 = attribute[ARH_FORM_CODE_OFFSET];
@@ -161,32 +154,35 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
                             //println!("Mapping pairs offset: {:#x}", mapping_pairs_offset);
 
                             // Decode the runs
-                            let mut run_offset = mapping_pairs_offset as usize;
+                            // I don't know how to decode a compressed file yet
+                            if !is_compressed {
+                                let mut run_offset = mapping_pairs_offset as usize;
 
-                            let mut runs : NtfsFileReader = NtfsFileReader::new(4096, file_size);
-
-                            while run_offset < attribute.len() {
-                                let current_run = &attribute[run_offset..];
-                                
-                                match read_run(current_run) {
-                                    Ok((0,0,0)) => {
-                                        // End of runs, break!
-                                        //println!("End of runs!");
-                                        //println!("{:?}", runs);
-                                        break;
-                                    },
-                                    Ok(res) => {
-                                        //println!("Got run! length: {:#x}  offset: {:#x}  run_size: {}", res.0, res.1, res.2);
-                                        run_offset += res.2;
-                                        runs.add_run(res.1, res.0);
-                                    },
-                                    Err(()) => {
-                                        return Err("Error reading run!!".to_owned());
+                                let mut runs : NtfsFileReader = NtfsFileReader::new(4096, file_size);
+    
+                                while run_offset < attribute.len() {
+                                    let current_run = &attribute[run_offset..];
+                                    
+                                    match read_run(current_run) {
+                                        Ok((0,0,0)) => {
+                                            // End of runs, break!
+                                            //println!("End of runs!");
+                                            //println!("{:?}", runs);
+                                            break;
+                                        },
+                                        Ok(res) => {
+                                            //println!("Got run! length: {:#x}  offset: {:#x}  run_size: {}", res.0, res.1, res.2);
+                                            run_offset += res.2;
+                                            runs.add_run(res.1, res.0);
+                                        },
+                                        Err(()) => {
+                                            return Err("Error reading run!!".to_owned());
+                                        }
                                     }
                                 }
+    
+                                mft_record.file_data_info = Some(MftFileDataInfo::NonResident(runs));    
                             }
-
-                            mft_record.file_data_info = Some(MftFileDataInfo::NonResident(runs));
                         }
                     },
                     _ => {
@@ -250,7 +246,7 @@ fn read_run_varbyte_i64(run_slice : &[u8], length : usize) -> i64 {
 
         let current_byte = run_slice[index];
 
-        result |= (current_byte as i64) << index * 8;
+        result |= (current_byte as i64) << (index * 8);
 
         is_negative = (current_byte & 0x80) > 0;
 
@@ -259,7 +255,7 @@ fn read_run_varbyte_i64(run_slice : &[u8], length : usize) -> i64 {
 
     if is_negative {
         // Highest bit is negative, this means we need to pad out the rest of the bytes with 0xFF to make the result negative
-        result |= -1i64 << length * 8;
+        result |= -1i64 << (length * 8);
     }
 
     result

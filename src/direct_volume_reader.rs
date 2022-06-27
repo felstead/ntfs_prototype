@@ -70,7 +70,7 @@ impl DirectVolumeMftReader {
             let chars  = drive_letter.as_bytes();
 
             let letter = chars[0] as char;
-            if ((letter >= 'a' && letter <= 'z') || (letter > 'A' && letter < 'Z')) && chars[1] as char == ':' {
+            if ('a'..='z').contains(&letter) || ('A'..='Z').contains(&letter) && chars[1] as char == ':' {
                 is_valid_drive_letter = true;
             }
         }
@@ -157,8 +157,8 @@ impl DirectVolumeMftReader {
 
         match mft_record_result {
             Some(MftRecord { file_name_info : Some(mft_file_name), file_data_info : Some(MftFileDataInfo::NonResident(mft_file_reader)), .. }) => {
-                if mft_file_name.file_name != "$MFT" {
-                    return Err(format!("MFT file_name was not $MFT, got '{}' instead!", mft_file_name.file_name))
+                if mft_file_name.get_file_name() != "$MFT" {
+                    return Err(format!("MFT file_name was not $MFT, got '{}' instead!", mft_file_name.get_file_name()))
                 }
                 self.mft_file_reader = mft_file_reader
             },
@@ -177,7 +177,7 @@ impl DirectVolumeMftReader {
 
         let buffer_record_capacity = buffer.len() / MFT_RECORD_SIZE;
         if buffer_record_capacity < num_records {
-            return Err(format!("Requested {} records, but buffer of size {} can only fit {} records", num_records, buffer.len(), buffer_record_capacity).to_owned())
+            return Err(format!("Requested {} records, but buffer of size {} can only fit {} records", num_records, buffer.len(), buffer_record_capacity))
         }
 
         let max_requested_record_id = first_record_id + (num_records as i64);
