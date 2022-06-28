@@ -180,7 +180,8 @@ impl DirectVolumeMftReader {
             return Err(format!("Requested {} records, but buffer of size {} can only fit {} records", num_records, buffer.len(), buffer_record_capacity))
         }
 
-        let max_requested_record_id = first_record_id + (num_records as i64);
+        let max_requested_record_id = std::cmp::min(first_record_id + (num_records as i64), self.get_max_number_of_records() as i64);
+
         if max_requested_record_id > self.get_max_number_of_records() as i64 {
             return Err(format!("Tried to request records beyond end of MFT, requested record {}, max is {}", max_requested_record_id, self.get_max_number_of_records()))
         }

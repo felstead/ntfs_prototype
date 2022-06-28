@@ -1,7 +1,9 @@
 
 use std::time::{Instant};
 use std::collections::HashMap;
+use std::io::Write;
 
+use crate::common::MFT_RECORD_SIZE;
 use crate::mft_parser::{enumerate_mft_records, FileUsageStatus, FileType };
 
 mod direct_volume_reader;
@@ -19,14 +21,45 @@ fn main() {
     
         println!("MFT byte offset: {:#x}  Size: {}", mft_reader.get_mft_start_offset_bytes(), mft_reader.get_mft_size_bytes());
 
-        let buffer_size_in_records : usize = 100;
+        let buffer_size_in_records : usize = 32768;
 
-        let mut buffer = vec![0_u8; 1024 * buffer_size_in_records].into_boxed_slice();
+        let mut buffer = vec![0_u8; MFT_RECORD_SIZE * buffer_size_in_records].into_boxed_slice();
 
         let read_start = Instant::now();
-        mft_reader.read_records_into_buffer(0, buffer_size_in_records, &mut buffer[..]).unwrap();
-        let read_time = read_start.elapsed();
+        let mut record_index = 0;
+        let mut total_records = 0;
 
+        let mut total_good = 0;
+        let mut total_empty = 0;
+        
+        let mut f1 = std::fs::File::create("mft.dat").unwrap();
+        while record_index < mft_reader.get_max_number_of_records() {
+            let records_read = mft_reader.read_records_into_buffer(record_index as i64, buffer_size_in_records, &mut buffer[..]).unwrap(); 
+            total_records += records_read;
+            record_index += buffer_size_in_records;
+
+            f1.write(&buffer[0..records_read]).unwrap();
+            /*
+            enumerate_mft_records(&buffer[..], record_index as u64, |record_id, read_result| {
+                match read_result {
+                    Ok(Some(_record )) => {
+                        total_good += 1;
+                    },
+                    Ok(None) => {
+                        total_empty += 1;
+                    },
+                    Err(err) => println!("# {}: Error: {}", record_id, err)
+                }
+            });
+            */        
+        }
+        f1.flush();
+        let read_time = read_start.elapsed();
+        println!("Good: {}   Empty: {}", total_good, total_empty);
+
+        println!("Read time: {:?} for {} records", read_time, total_records);
+
+        return;
         let mut directories = HashMap::<u64, String>::new();
 
         let enumerate_start = Instant::now();
