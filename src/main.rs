@@ -15,11 +15,12 @@ mod common;
 fn main() {
 
     {
-        let mut mft_reader = direct_volume_reader::DirectVolumeMftReader::default();
+        //let mut mft_reader = direct_volume_reader::DirectVolumeMftReader::default();
 
-        mft_reader.open_mft("c:").unwrap();
-    
-        println!("MFT byte offset: {:#x}  Size: {}", mft_reader.get_mft_start_offset_bytes(), mft_reader.get_mft_size_bytes());
+        //mft_reader.open_mft("c:").unwrap();
+        let mut mft_reader = direct_volume_reader::create_mft_reader("C:").unwrap();
+
+        //println!("MFT byte offset: {:#x}  Size: {}", mft_reader.get_mft_start_offset_bytes(), mft_reader.get_mft_size_bytes());
 
         let buffer_size_in_records : usize = 32768;
 
@@ -32,28 +33,34 @@ fn main() {
         let mut total_good = 0;
         let mut total_empty = 0;
         
-        let mut f1 = std::fs::File::create("mft.dat").unwrap();
+        //let mut f1 = std::fs::File::create("mft.dat").unwrap();
         while record_index < mft_reader.get_max_number_of_records() {
             let records_read = mft_reader.read_records_into_buffer(record_index as i64, buffer_size_in_records, &mut buffer[..]).unwrap(); 
-            total_records += records_read;
-            record_index += buffer_size_in_records;
-
-            f1.write(&buffer[0..records_read]).unwrap();
-            /*
+            //f1.write(&buffer[0..records_read]).unwrap();
+            
             enumerate_mft_records(&buffer[..], record_index as u64, |record_id, read_result| {
                 match read_result {
                     Ok(Some(_record )) => {
                         total_good += 1;
+
+                        if let Some(file_name_info) = _record.file_name_info {
+                            //println!("{} -> {}", record_id, file_name_info.get_file_name());
+                        }
                     },
                     Ok(None) => {
                         total_empty += 1;
                     },
-                    Err(err) => println!("# {}: Error: {}", record_id, err)
+                    Err(err) => {
+                        println!("# {}: Error: {}", record_id, err);
+                        //panic!("");
+                    }
                 }
             });
-            */        
+
+            total_records += records_read;
+            record_index += buffer_size_in_records;
         }
-        f1.flush();
+        //f1.flush();
         let read_time = read_start.elapsed();
         println!("Good: {}   Empty: {}", total_good, total_empty);
 

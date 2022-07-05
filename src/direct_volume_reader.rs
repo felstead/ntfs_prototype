@@ -5,13 +5,105 @@ use windows_sys::{
     Win32::System::IO::{DeviceIoControl}
 };
 
-use std::ffi::{CString, c_void};
-
+use std::{ffi::{CString, c_void}, io::Seek};
+use std::path::Path;
+use std::fs::{File};
+use std::io::{Read, SeekFrom};
 
 use crate::{
     common::*, 
     mft_parser::*};
 use crate::ntfs_file_reader::NtfsFileReader;
+
+pub fn create_mft_reader(path_string : &str) -> Result<Box<dyn MftReader>, String> {
+
+    let path = Path::new(path_string);
+
+    if !path.exists() {
+        return Err(format!("Path {} does not exist", path_string));
+    }
+
+    // Parse the path to determine if this is a drive or a file
+    let mut is_valid_drive_letter = false;
+    if (2..3).contains(&path_string.len()) {
+        // Should only be ascii, if not then yikes
+        let chars  = path_string.as_bytes();
+
+        let letter = chars[0] as char;
+        if ('a'..='z').contains(&letter) || ('A'..='Z').contains(&letter) && chars[1] as char == ':' {
+            is_valid_drive_letter = true;
+        }
+    }
+
+    if is_valid_drive_letter {
+        if cfg!(windows) {
+            // Direct volume reader
+            let reader = DirectVolumeMftReader::new(path_string)?;
+            Ok(reader)
+        } else {
+            Err("Direct volume MFT reads (e.g. c:) are only supported on Windows".to_owned()) 
+        }            
+    } else {
+        // File reader
+        let reader = FileMftReader::new(path_string)?;
+        Ok(reader)
+    }
+}
+
+
+pub trait MftReader {
+    fn get_mft_size_bytes(&self) -> i64;
+    fn get_max_number_of_records(&self) -> usize;
+    fn read_records_into_buffer(&mut self, first_record_id : i64, num_records : usize, buffer : &mut [u8]) -> Result<usize, String>;
+}
+
+pub struct FileMftReader {
+    mft_file: File
+}
+
+impl FileMftReader {
+    pub fn new(file_name : &str) -> Result<Box<FileMftReader>, String> {
+        let file = match File::open(file_name) {
+            Ok(file) => {
+                file
+            },
+            Err(err) => {
+                return Err(err.to_string())
+            }
+        };
+        
+        let reader = FileMftReader {
+            mft_file: file
+        };
+
+        // TODO: Verify this is an MFT
+        return Ok(Box::new(reader))
+    }
+}
+
+impl MftReader for FileMftReader {
+    fn get_mft_size_bytes(&self) -> i64 {
+        self.mft_file.metadata().unwrap().len() as i64
+    }
+
+    fn get_max_number_of_records(&self) -> usize {
+        (self.get_mft_size_bytes() / MFT_RECORD_SIZE as i64) as usize
+    }
+
+    fn read_records_into_buffer(&mut self, first_record_id : i64, _num_records : usize, buffer : &mut [u8]) -> Result<usize, String> {
+        match self.mft_file.seek(SeekFrom::Start(first_record_id as u64 * MFT_RECORD_SIZE as u64)) {
+            Ok(_) => {
+                match self.mft_file.read(buffer) {
+                    Ok(bytes_read) => return Ok(bytes_read / MFT_RECORD_SIZE),
+                    Err(err) => return Err(err.to_string())
+                }
+            },
+            Err(err) => {
+                return Err(err.to_string());
+            }
+        }
+    }
+}
 
 pub struct DirectVolumeMftReader {
     drive_letter : String,
@@ -20,6 +112,35 @@ pub struct DirectVolumeMftReader {
     ntfs_volume_data : NTFS_VOLUME_DATA_BUFFER,
     is_open : bool,
     mft_file_reader : NtfsFileReader,
+}
+
+impl MftReader for DirectVolumeMftReader {
+    fn get_mft_size_bytes(&self) -> i64 {
+        self.ntfs_volume_data.MftValidDataLength
+    }
+
+    fn get_max_number_of_records(&self) -> usize {
+        (self.get_mft_size_bytes() / MFT_RECORD_SIZE as i64) as usize
+    }
+
+    fn read_records_into_buffer(&mut self, first_record_id : i64, num_records : usize, buffer : &mut [u8]) -> Result<usize, String> {
+        if !self.is_open {
+            return Err("MFT was not opened!".to_owned())
+        }
+
+        let buffer_record_capacity = buffer.len() / MFT_RECORD_SIZE;
+        if buffer_record_capacity < num_records {
+            return Err(format!("Requested {} records, but buffer of size {} can only fit {} records", num_records, buffer.len(), buffer_record_capacity))
+        }
+
+        let max_requested_record_id = std::cmp::min(first_record_id + (num_records as i64), self.get_max_number_of_records() as i64);
+
+        if max_requested_record_id > self.get_max_number_of_records() as i64 {
+            return Err(format!("Tried to request records beyond end of MFT, requested record {}, max is {}", max_requested_record_id, self.get_max_number_of_records()))
+        }
+
+        self.mft_file_reader.read_file_bytes(first_record_id * MFT_RECORD_SIZE as i64, num_records * MFT_RECORD_SIZE, buffer, self.volume_handle)
+    }
 }
 
 impl Default for DirectVolumeMftReader {
@@ -49,19 +170,12 @@ impl Drop for DirectVolumeMftReader {
 
 impl DirectVolumeMftReader {
 
+    #[allow(dead_code)]
     pub fn get_mft_start_offset_bytes(&self) -> i64 {
         self.ntfs_volume_data.BytesPerCluster as i64 * self.ntfs_volume_data.MftStartLcn
     }
 
-    pub fn get_mft_size_bytes(&self) -> i64 {
-        self.ntfs_volume_data.MftValidDataLength
-    }
-
-    pub fn get_max_number_of_records(&self) -> usize {
-        (self.get_mft_size_bytes() / MFT_RECORD_SIZE as i64) as usize
-    }
-
-    pub fn open_mft(&mut self, drive_letter : &str) -> Result<(), String> {
+    pub fn new(drive_letter : &str) -> Result<Box<DirectVolumeMftReader>, String> {
         
         // Validate drive letter, should be something like "c: or "C:"
         let mut is_valid_drive_letter = false;
@@ -79,17 +193,17 @@ impl DirectVolumeMftReader {
             return Err(format!("Invalid drive letter: {}", drive_letter));
         }
 
-        self.drive_letter = drive_letter.to_owned();
+        let mut reader = Box::new(DirectVolumeMftReader::default());
 
         // This could all be in one function but I'm separating them for readability
-        self.open_drive()?;
-        self.read_mft_info()?;
+        reader.drive_letter = drive_letter.to_owned();
+        reader.open_drive()?;
+        reader.read_mft_info()?;
 
         // Parse the MFT file
+        reader.is_open = true;
 
-        self.is_open = true;
-
-        Ok(())
+        Ok(reader)
     }
 
     fn open_drive(&mut self) -> Result<(), String> {
@@ -156,11 +270,12 @@ impl DirectVolumeMftReader {
         let mft_record_result = read_single_mft_record(&mft_record_buffer, 0)?;
 
         match mft_record_result {
-            Some(MftRecord { file_name_info : Some(mft_file_name), file_data_info : Some(MftFileDataInfo::NonResident(mft_file_reader)), .. }) => {
+            Some(MftRecord { file_name_info : Some(mft_file_name), file_data_info : Some(MftFileDataInfo::NonResident(mft_file_data)), .. }) => {
                 if mft_file_name.get_file_name() != "$MFT" {
                     return Err(format!("MFT file_name was not $MFT, got '{}' instead!", mft_file_name.get_file_name()))
                 }
-                self.mft_file_reader = mft_file_reader
+
+                self.mft_file_reader = mft_file_data.get_direct_file_reader(self.ntfs_volume_data.BytesPerCluster as usize)?;
             },
             _ => {
                 return Err("MFT record data was missing!".to_owned())
@@ -169,26 +284,6 @@ impl DirectVolumeMftReader {
 
         Ok(())
     }
-
-    pub fn read_records_into_buffer(&self, first_record_id : i64, num_records : usize, buffer : &mut [u8]) -> Result<usize, String> {
-        if !self.is_open {
-            return Err("MFT was not opened!".to_owned())
-        }
-
-        let buffer_record_capacity = buffer.len() / MFT_RECORD_SIZE;
-        if buffer_record_capacity < num_records {
-            return Err(format!("Requested {} records, but buffer of size {} can only fit {} records", num_records, buffer.len(), buffer_record_capacity))
-        }
-
-        let max_requested_record_id = std::cmp::min(first_record_id + (num_records as i64), self.get_max_number_of_records() as i64);
-
-        if max_requested_record_id > self.get_max_number_of_records() as i64 {
-            return Err(format!("Tried to request records beyond end of MFT, requested record {}, max is {}", max_requested_record_id, self.get_max_number_of_records()))
-        }
-
-        self.mft_file_reader.read_file_bytes(first_record_id * MFT_RECORD_SIZE as i64, num_records * MFT_RECORD_SIZE, buffer, self.volume_handle)
-    }
-
 }
 
 

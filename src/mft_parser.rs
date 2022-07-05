@@ -1,11 +1,10 @@
 use byteorder::*;
-use crate::ntfs_file_reader::NtfsFileReader;
 use crate::common::*;
 use crate::mft_types::*;
 
-pub enum MftFileDataInfo {
+pub enum MftFileDataInfo<'a> {
     _Resident, // Not implemented
-    NonResident(NtfsFileReader)
+    NonResident(MftNonResidentFileData<'a>)
 }
 
 #[derive(Debug, PartialEq)]
@@ -42,7 +41,7 @@ pub struct MftRecord<'a> {
     pub standard_information : Option<MftStandardInformation<'a>>,
     pub file_name_info : Option<MftFileNameInfo<'a>>,
     pub short_file_name_info : Option<MftFileNameInfo<'a>>,
-    pub file_data_info : Option<MftFileDataInfo>
+    pub file_data_info : Option<MftFileDataInfo<'a>>
 }
 
 pub fn enumerate_mft_records(buffer : &[u8], record_id_start : u64, mut reader_func: impl FnMut(u64, Result<Option<MftRecord>, String>)) {
@@ -58,7 +57,6 @@ pub fn enumerate_mft_records(buffer : &[u8], record_id_start : u64, mut reader_f
         offset += MFT_RECORD_SIZE;
         current_record_id += 1;
     }
-    
 }
 
 pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<MftRecord>, String> {
@@ -106,13 +104,17 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
             if attribute_type_code == 0xffffffff {
                 break;
             }
-            let record_length = LittleEndian::read_u32(&record[attribute_offset+ARH_RECORD_LENGTH_OFFSET..attribute_offset+ARH_RECORD_LENGTH_OFFSET+4]) as usize;
+            // While the record length is a u32, it seems like only the bottom 16 bits are the record length.
+            // Am I messing this up with an ATTRIBUTE_LIST_ENTRY?
+            let record_length = LittleEndian::read_u16(&record[attribute_offset+ARH_RECORD_LENGTH_OFFSET..attribute_offset+ARH_RECORD_LENGTH_OFFSET+2]) as usize;
             //println!("Reading attribute at offset {:#x}-{:#x}, type code {:#x}, record length: {}", attribute_offset, attribute_offset + record_length, attribute_type_code, record_length);
 
             if record_length > 0 && record_length <= MFT_RECORD_SIZE {
 
                 let attribute = &record[attribute_offset..attribute_offset+record_length];
                 let resident_attribute_slice = &attribute[ARH_RES_LENGTH..];
+                let nonresident_attribute_slice = &attribute[ARH_NONRES_START_OFFSET..];
+                let formcode : u8 = attribute[ARH_FORM_CODE_OFFSET];
 
                 //println!("{:?}", attribute);
 
@@ -136,10 +138,12 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
                         }
                     },
                     ATTR_DATA => {
-                        let formcode : u8 = attribute[ARH_FORM_CODE_OFFSET];
                         //println!("Data form code: {}", formcode);
                         if formcode == FORM_CODE_NONRESIDENT {
-                            let _lowest_vcn = LittleEndian::read_u64(&attribute[ARH_NONRES_LOWEST_VCN_OFFSET..ARH_NONRES_LOWEST_VCN_OFFSET+8]);
+
+                            mft_record.file_data_info = Some(MftFileDataInfo::NonResident(MftNonResidentFileData::new(nonresident_attribute_slice)));
+
+                            /*let _lowest_vcn = LittleEndian::read_u64(&attribute[ARH_NONRES_LOWEST_VCN_OFFSET..ARH_NONRES_LOWEST_VCN_OFFSET+8]);
                             let _highest_vcn = LittleEndian::read_u64(&attribute[ARH_NONRES_HIGHEST_VCN_OFFSET..ARH_NONRES_HIGHEST_VCN_OFFSET+8]);
 
                             let mapping_pairs_offset = LittleEndian::read_u16(&attribute[ARH_NONRES_MAPPING_PAIRS_OFFSET_OFFSET..ARH_NONRES_MAPPING_PAIRS_OFFSET_OFFSET+2]);
@@ -182,7 +186,7 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
                                 }
     
                                 mft_record.file_data_info = Some(MftFileDataInfo::NonResident(runs));    
-                            }
+                            }*/
                         }
                     },
                     _ => {
@@ -190,7 +194,7 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
                     }
                 }
             } else {
-                println!("Read invalid attribute record size of {}, skipping the rest of the record", record_length);
+                println!("Record {}: Read invalid attribute record size of {} for attribute type {:#x} at offset {:#x}, skipping the rest of the record", record_id, record_length, attribute_type_code, attribute_offset+ARH_RECORD_LENGTH_OFFSET);
                 break;
             }
 
@@ -203,121 +207,5 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
     } else {
         // Bad/corrupt signature
         Err(format!("Signature was corrupt, expected 0x{:#x} got 0x{:#x}", EXPECTED_SIGNATURE, signature))
-    }
-}
-
-
-fn read_run(run_slice : &[u8]) -> Result<(i64, i64, usize), ()> {
-    let header = run_slice[0] as usize;
-
-    if header == 0 {
-        return Ok((0, 0, 0));
-    }
-
-    let length_size = header & 0x0F; // Low nibble
-    let offset_size = header >> 4; // High nibble
-
-    if length_size > 8 || offset_size > 8 {
-        return Err(());
-    }
-
-    let run_length = length_size + offset_size + 1;
-
-    if run_slice.len() < run_length {
-        Err(())
-    } else {
-        Ok(
-            (read_run_varbyte_i64(&run_slice[1..length_size+1], length_size),
-            read_run_varbyte_i64(&run_slice[length_size+1..length_size+offset_size+1], offset_size),
-            run_length)
-        )
-    }
-}
-
-fn read_run_varbyte_i64(run_slice : &[u8], length : usize) -> i64 {
-    assert_eq!(run_slice.len(), length);
-
-    let mut result : i64 = 0;
-    let mut bytes_remaining : i8 = length as i8;
-    let mut is_negative : bool = false;
-
-    while bytes_remaining > 0 {
-        let index = (length as i8 - bytes_remaining) as usize;
-
-        let current_byte = run_slice[index];
-
-        result |= (current_byte as i64) << (index * 8);
-
-        is_negative = (current_byte & 0x80) > 0;
-
-        bytes_remaining -= 1;
-    }
-
-    if is_negative {
-        // Highest bit is negative, this means we need to pad out the rest of the bytes with 0xFF to make the result negative
-        result |= -1i64 << (length * 8);
-    }
-
-    result
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_run_varbyte_read_basic() {
-        let simple_run : [u8; 4] = [0x21, 0x18, 0x34, 0x56];
-
-        let result = super::read_run(&simple_run[..]).unwrap();
-
-        assert_eq!(result.0, 0x18);
-        assert_eq!(result.1, 0x5634);
-        assert_eq!(result.2, 4);
-
-        let longer_run_1 : [u8; 11] = [0x28, 0x12, 0x23, 0x34, 0x45, 0x54, 0x43, 0x32, 0x21, 0x34, 0x56];
-        let longer_result_1 = super::read_run(&longer_run_1[..]).unwrap();
-
-        assert_eq!(longer_result_1.0, 0x2132435445342312);
-        assert_eq!(longer_result_1.1, 0x5634);
-        assert_eq!(longer_result_1.2, 11);
-
-        let longer_run_2 : [u8; 11] = [0x82, 0x34, 0x56, 0x12, 0x23, 0x34, 0x45, 0x54, 0x43, 0x32, 0x21];
-        let longer_result_2 = super::read_run(&longer_run_2[..]).unwrap();
-
-        assert_eq!(longer_result_2.0, 0x5634);
-        assert_eq!(longer_result_2.1, 0x2132435445342312);
-        assert_eq!(longer_result_2.2, 11);
-    }
-
-    #[test]
-    fn run_varbyte_read_negative() {
-        let negative_run_1 : [u8; 4] = [0x21, 0x87, 0x34, 0xF6];
-        let result_1 = super::read_run(&negative_run_1[..]).unwrap();
-
-        assert_eq!(result_1.0, -121); // 0x87 == -121
-        assert_eq!(result_1.1, -2508); // 0xF634 == -2508
-        assert_eq!(result_1.2, 4);
-    }
-
-    #[test]
-    fn test_run_invalid_len() {
-        // First nibble is too large for slice
-        let invalid_run_1 : [u8; 4] = [0x31, 0x18, 0x34, 0x56];
-        let result_1 = super::read_run(&invalid_run_1[..]);
-        assert!(result_1.is_err());
-
-        // Second nibble is too large for slice
-        let invalid_run_2 : [u8; 4] = [0x13, 0x18, 0x34, 0x56];
-        let result_2 = super::read_run(&invalid_run_2[..]);
-        assert!(result_2.is_err());
-
-        // Low nibble is straight up out of range
-        let invalid_run_3 : [u8; 13] = [0x19, 0x18, 0x34, 0x56, 0x18, 0x34, 0x56, 0x18, 0x34, 0x56, 0x18, 0x34, 0x56];
-        let result_3 = super::read_run(&invalid_run_3[..]);
-        assert!(result_3.is_err());
-
-        // High nibble is straight up out of range
-        let invalid_run_4 : [u8; 13] = [0x91, 0x18, 0x34, 0x56, 0x18, 0x34, 0x56, 0x18, 0x34, 0x56, 0x18, 0x34, 0x56];
-        let result_4 = super::read_run(&invalid_run_4[..]);
-        assert!(result_4.is_err());
     }
 }

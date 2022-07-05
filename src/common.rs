@@ -27,6 +27,7 @@ pub const ARH_RECORD_LENGTH_OFFSET : usize = 4;
 pub const ARH_RES_LENGTH : usize = 24; // The offset to the end of a "resident" type header
 
 // Non-resident attributes mark where the data for the attribute lives, which could include the data for the file
+pub const ARH_NONRES_START_OFFSET : usize = 16; // Synonym for the lowest VCN, just for readability in implementation
 pub const ARH_NONRES_LOWEST_VCN_OFFSET : usize = 16;
 pub const ARH_NONRES_HIGHEST_VCN_OFFSET : usize = 24;
 pub const ARH_NONRES_MAPPING_PAIRS_OFFSET_OFFSET : usize = 32;
