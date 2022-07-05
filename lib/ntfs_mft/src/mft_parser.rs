@@ -97,8 +97,6 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
 
         let mut attribute_offset = first_attribute_offset as usize;
 
-        let mut is_compressed = false;
-
         while attribute_offset < MFT_RECORD_SIZE {
             let attribute_type_code = LittleEndian::read_u32(&record[attribute_offset..attribute_offset+4]);
             if attribute_type_code == 0xffffffff {
@@ -121,7 +119,6 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
                 match attribute_type_code {
                     ATTR_STANDARD_INFORMATION => {
                         let std_info = MftStandardInformation::new(resident_attribute_slice);
-                        is_compressed = std_info.get_permissions() & 0x800u32 > 0;
 
                         mft_record.standard_information = Some(std_info);
                     },

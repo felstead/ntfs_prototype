@@ -3,14 +3,10 @@ use std::time::{Instant};
 use std::collections::HashMap;
 use std::io::Write;
 
-use crate::common::MFT_RECORD_SIZE;
-use crate::mft_parser::{enumerate_mft_records, FileUsageStatus, FileType };
+use ntfs_mft::direct_volume_reader;
+use ntfs_mft::common::MFT_RECORD_SIZE;
+use ntfs_mft::mft_parser::{enumerate_mft_records, FileUsageStatus, FileType};
 
-mod direct_volume_reader;
-mod mft_parser;
-mod mft_types;
-mod ntfs_file_reader;
-mod common;
 
 fn main() {
 
@@ -44,7 +40,7 @@ fn main() {
                         total_good += 1;
 
                         if let Some(file_name_info) = _record.file_name_info {
-                            //println!("{} -> {}", record_id, file_name_info.get_file_name());
+                            println!("{} -> {}", record_id, file_name_info.get_file_name());
                         }
                     },
                     Ok(None) => {

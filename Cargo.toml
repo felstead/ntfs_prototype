@@ -1,19 +1,9 @@
 [package]
-name = "ntfs-mft-reader"
+name = "ntfs-mft-utils"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
-byteorder = "1"
-
-[dependencies.windows-sys]
-version = "0.36.1"
-features = [
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_System_IO",
-    "Win32_System_Ioctl",
-    "Win32_Storage_FileSystem",
-]
+[dependencies.ntfs-mft]
+path = "lib/ntfs_mft"
