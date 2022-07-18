@@ -12,7 +12,8 @@ use std::io::{Read, SeekFrom};
 
 use crate::{
     common::*, 
-    mft_parser::*};
+    mft_parser::*,
+    mft_types::*};
 use crate::ntfs_file_reader::NtfsFileReader;
 
 pub fn create_mft_reader(path_string : &str) -> Result<Box<dyn MftReader>, String> {
@@ -37,9 +38,12 @@ pub fn create_mft_reader(path_string : &str) -> Result<Box<dyn MftReader>, Strin
 
     if is_valid_drive_letter {
         if cfg!(windows) {
-            // Direct volume reader
-            let reader = DirectVolumeMftReader::new(path_string)?;
-            Ok(reader)
+            if !is_elevated::is_elevated() {
+                Err("Direct volume MFT reads must be executed in an elevated context - try running as Administrator".to_owned())     
+            } else {
+                let reader = DirectVolumeMftReader::new(path_string)?;
+                Ok(reader)    
+            }
         } else {
             Err("Direct volume MFT reads (e.g. c:) are only supported on Windows".to_owned()) 
         }            

@@ -66,8 +66,8 @@ impl<'a> MftFileNameInfo<'a> {
     pub const FN_ALTERED_TIMESTAMP_OFFSET : usize = 16;
     pub const FN_MFT_CHANGED_TIMESTAMP_OFFSET : usize = 24;
     pub const FN_READ_TIMESTAMP_OFFSET : usize = 32;
-    pub const FN_ALLOCATED_SIZE_OF_FILE : usize = 40;
-    pub const FN_REAL_SIZE_OF_FILE : usize = 48;
+    pub const FN_ALLOCATED_SIZE_OF_FILE_OFFSET : usize = 40;
+    pub const FN_REAL_SIZE_OF_FILE_OFFSET : usize = 48;
     // Some others
     pub const FN_FILE_NAME_LENGTH_CHARS_OFFSET : usize = 64;
     pub const FN_FILE_NAME_DATA_OFFSET : usize = 66;
@@ -78,7 +78,7 @@ impl<'a> MftFileNameInfo<'a> {
 
     pub fn get_file_name(&self) -> String { 
         let file_name_length : usize = self.slice_data[MftFileNameInfo::FN_FILE_NAME_LENGTH_CHARS_OFFSET] as usize;
-        let file_name_data_bytes = &self.slice_data[MftFileNameInfo::FN_FILE_NAME_DATA_OFFSET..MftFileNameInfo::FN_FILE_NAME_DATA_OFFSET + file_name_length];
+        let file_name_data_bytes = &self.slice_data[MftFileNameInfo::FN_FILE_NAME_DATA_OFFSET..MftFileNameInfo::FN_FILE_NAME_DATA_OFFSET + (file_name_length*2)];
 
         // This is "unsafe" but it really isn't assuming the slice is good
         let file_name_data_utf16 = unsafe { std::slice::from_raw_parts(file_name_data_bytes.as_ptr() as *const u16, file_name_length) };
@@ -90,12 +90,26 @@ impl<'a> MftFileNameInfo<'a> {
         // Only the top 48 bits are the actual file reference
         LittleEndian::read_u48(&self.slice_data[MftFileNameInfo::FN_PARENT_DIR_REFERENCE_OFFSET..MftFileNameInfo::FN_PARENT_DIR_REFERENCE_OFFSET+6]) 
     }
+
+    pub fn get_allocated_size_of_file(&self) -> u64 { uint_from_slice(self.slice_data, MftFileNameInfo::FN_ALLOCATED_SIZE_OF_FILE_OFFSET) }
+
+    pub fn get_real_size_of_file(&self) -> u64 { uint_from_slice(self.slice_data, MftFileNameInfo::FN_REAL_SIZE_OF_FILE_OFFSET) }
+}
+
+pub struct MftResidentFileData <'a> {
+    slice_data : &'a[u8]
+}
+
+#[allow(dead_code)]
+impl<'a> MftResidentFileData<'a> {
+    const RFD_FILE_SIZE_OFFSET : usize = 0;
+
+    pub fn get_file_size(&self) -> u64 { uint_from_slice(&self.slice_data, MftResidentFileData::RFD_FILE_SIZE_OFFSET) }
 }
 
 pub struct MftNonResidentFileData <'a> {
     slice_data : &'a[u8]
 }
-
 
 #[allow(dead_code)]
 impl<'a> MftNonResidentFileData<'a> {

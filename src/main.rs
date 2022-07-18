@@ -1,4 +1,5 @@
 
+use std::fs::FileType;
 use std::io::Write;
 use std::time::{Instant};
 use std::collections::HashMap;
@@ -6,9 +7,10 @@ use std::fmt::Display;
 
 use ntfs_mft::direct_volume_reader;
 use ntfs_mft::common::MFT_RECORD_SIZE;
-use ntfs_mft::mft_parser::{enumerate_mft_records, FileUsageStatus, FileType};
+use ntfs_mft::mft_parser::{enumerate_mft_records, FileUsageStatus, FileType as MftFileType, MftRecordBuffer, MftRecord};
 
 use clap::{Parser, Subcommand};
+use ntfs_mft::mft_types::MftFileNameInfo;
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -20,7 +22,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Extracts an MFT from a live volume and dumps it (in its original binary format) to a file
+    /// Extracts an MFT from a live volume and dumps it (in its original binary format) to a file.
+    /// Requires running as Administrator
     DumpRaw {
         /// The target volume to dump the MFT from, e.g. C:, D:, etc
         #[clap(value_parser)]
@@ -34,6 +37,12 @@ enum Commands {
         #[clap(long, value_parser)]
         ranges: Option<String>,
     },
+    /// Displays information about the MFT
+    Info {
+        /// The target volume or file to read.
+        #[clap(value_parser)]
+        target: String,
+    }
 }
 
 fn main() {
@@ -43,6 +52,9 @@ fn main() {
     let result = match &cli.command {
         Commands::DumpRaw { target, output_file, ranges } => {
             dump_raw(target, output_file, ranges)
+        },
+        Commands::Info { target } => {
+            info(target)
         }
     };
     
@@ -72,142 +84,186 @@ fn dump_raw(target : &String, output_file_name : &String, _ranges : &Option<Stri
 
     let mut buffer = vec![0_u8; MFT_RECORD_SIZE * buffer_size_in_records].into_boxed_slice();
 
-    let mut record_index = 0;
-
     println!("Dumping MFT for {} to file {}...", target, output_file_name);
 
-    while record_index < mft_reader.get_max_number_of_records() {
+    for record_index in (0..mft_reader.get_max_number_of_records()).step_by(buffer_size_in_records) {
         println!("Reading record {} / {}", record_index, mft_reader.get_max_number_of_records());
         let records_read = mft_reader.read_records_into_buffer(record_index as i64, buffer_size_in_records, &mut buffer[..])?;
      
         err_typeify(output_file.write(&buffer[0..records_read]))?;
-
-        record_index += buffer_size_in_records;
     }
     println!("Done!");
 
     Ok(())
 }
-        //let mut mft_reader = direct_volume_reader::DirectVolumeMftReader::default();
 
-        //println!("MFT byte offset: {:#x}  Size: {}", mft_reader.get_mft_start_offset_bytes(), mft_reader.get_mft_size_bytes());
+#[derive(Default)]
+struct MftInfo {
+    records : Vec<Item>,
+    record_id_to_index : HashMap<u64, usize>,
+    unparented_items : HashMap<u64, Vec<usize>>
+}
 
+impl MftInfo {
 
-        
-        //let mut f1 = std::fs::File::create("mft.dat").unwrap();
-                    //f1.write(&buffer[0..records_read]).unwrap();
-       /*      
-            enumerate_mft_records(&buffer[..], record_index as u64, |record_id, read_result| {
-                match read_result {
-                    Ok(Some(_record )) => {
-                        total_good += 1;
+    const ROOT_ID : u64 = 5;
 
-                        if let Some(file_name_info) = _record.file_name_info {
-                            println!("{} -> {}", record_id, file_name_info.get_file_name());
-                        }
-                    },
-                    Ok(None) => {
-                        total_empty += 1;
-                    },
-                    Err(err) => {
-                        println!("# {}: Error: {}", record_id, err);
-                        //panic!("");
-                    }
-                }
-            });
+    fn new() -> Self {
+        MftInfo::default()
+    }
 
-            total_records += records_read;
-            record_index += buffer_size_in_records;
+    fn get_item_by_record_id(&self, record_id : u64) -> Option<&Item> {
+        match self.record_id_to_index.get(&record_id) {
+            Some(index) => Some(&self.records[*index]),
+            None => None
         }
-        //f1.flush();
-        let read_time = read_start.elapsed();
-        println!("Good: {}   Empty: {}", total_good, total_empty);
+    }
 
-        println!("Read time: {:?} for {} records", read_time, total_records);
+    fn get_item_by_index(&self, index : usize) -> Option<&Item> {
+        if index < self.records.len() {
+            Some(&self.records[index])
+        } else {
+            None
+        }
+    }
+ 
+    fn get_root_item(&self) -> Option<&Item> { 
+        self.get_item_by_record_id(MftInfo::ROOT_ID)
+    }
 
-        return;
-        let mut directories = HashMap::<u64, String>::new();
+    fn add_item(&mut self, mut item : Item) {
+        // Check for children and add their info if we have them
+        if item.is_directory {
+            if let Some(new_children) = self.unparented_items.remove(&item.id) {
+                for item_index in new_children {
+                    let child_record = &self.records[item_index];
+                    item.sub_items_size += child_record.self_size;
+                    item.sub_item_indexes.push(item_index);
+                }
+            }
+        }
 
-        let enumerate_start = Instant::now();
-        enumerate_mft_records(&buffer[..], 0, |record_id, read_result| {
-            match read_result {
-                Ok(Some(record )) => {
-                    println!("Record {}", record_id);
-                    match record.file_name_info.as_ref() {
-                        Some(filename) => {
-                            println!("{}", filename.get_file_name());
-                        }
-                        ,
-                        _ => {}
-                    };
+        let new_item_index = self.records.len();
+
+        // Aggregate this to parents
+        let mut parent_id = item.parent_id;
+        let mut parent_count = 0;
+        while let Some(parent_record_index) = self.record_id_to_index.get(&parent_id) {
+            let mut parent_record = &mut self.records[*parent_record_index];
+
+            // If this is the direct parent, add the item to the sub item IDs
+            if parent_record.id == item.parent_id {
+                parent_record.sub_item_indexes.push(new_item_index)
+            }
+
+            parent_record.sub_items_size += item.get_total_size();
+
+            if parent_id == parent_record.id  {
+                break;
+            } else {
+                parent_id = parent_record.id;
+                parent_count += 1;
+            }
+        }
+
+        if parent_count == 0 && item.id != 5 {
+            // This item is unparented, add it to the unparented list
+            let unparented_items = self.unparented_items.entry(item.parent_id).or_default();
+            unparented_items.push(new_item_index);
+        }
+        
+        //println!("Adding {} - {}", &item.id, &item.name);
+
+        // Add item to collections
+        self.record_id_to_index.insert(item.id, self.records.len());
+        self.records.push(item);
+    }
 
 
-                    if record.usage_status == FileUsageStatus::InUse {
-                        match record.file_type {
-                            FileType::File => {
-                                match record.standard_information.as_ref() {
-                                    Some(std_info) => {
-                                        println!("Created: {:#x}", std_info.get_create_timestamp().dwLowDateTime);
-                                    },
-                                    _ => {}
-                                }
-                            },
-                            FileType::Directory => {
-                                match record.file_name_info.as_ref() {
-                                    Some(filename) => {
-                                        let dir_name = filename.get_file_name();
-                                        println!("Directory {} with parent {} -> parent name: {:?}",  &dir_name, filename.get_parent_directory_id(), directories.get(&filename.get_parent_directory_id()));
-                                        directories.insert(record.id, dir_name);
-                                        
-                                    },
-                                    _ => {}
-                                }
-*/
-                                /*directories.insert(record.id, record.file_name.unwrap_or_default().file_name);
+}
 
-                                //let file_name = record.file_name.as_ref();
-                                if record.file_name.is_some() {
-                                    println!("Directory {} with parent {} -> parent name: {:?}", 
-                                        record.file_name.unwrap_or_default().file_name, 
-                                        record.file_name.unwrap_or_default().parent_dir_id, 
-                                        directories.get(&record.file_name.unwrap_or_default().parent_dir_id))
-                                }*/
-/*                                 
-                            },
-                            _ => {}
-                        }
+struct Item {
+    id : u64,
+    parent_id : u64,
+    name : String,
+    is_directory : bool,
+    sub_item_indexes : Vec<usize>,
+    // Aggregates
+    sub_items_size : u64,
+    self_size : u64,
+    sub_item_count : u64
+}
+
+impl Item {
+    fn new(mft_record : &MftRecord) -> Option<Self> {
+        match mft_record {
+            MftRecord { usage_status : FileUsageStatus::InUse, file_name_info : Some(file_name), ..} => {
+                Some(Item {
+                    id : mft_record.id,
+                    parent_id : file_name.get_parent_directory_id(),
+                    name : file_name.get_file_name().to_owned(),
+                    is_directory : mft_record.file_type == MftFileType::Directory,
+                    sub_item_indexes : vec!(),
+                    sub_items_size : 0,
+                    self_size : file_name.get_real_size_of_file(),
+                    sub_item_count : 0
+                })
+            },
+            _ => { 
+                None 
+            }      
+        }
+    }
+
+    fn get_total_size(&self) -> u64 {
+        return self.self_size + self.sub_items_size;
+    }
+}
+
+fn info(target : &String) -> Result<(), String> {
+    let mut mft_reader = direct_volume_reader::create_mft_reader(target)?;
+
+    let buffer_size_in_records : usize = 32768; // TODO: Make configurable
+
+    let mut buffer = vec![0_u8; MFT_RECORD_SIZE * buffer_size_in_records].into_boxed_slice();
+
+    let mut mft_info = MftInfo::new();
+
+    for record_index in (0..mft_reader.get_max_number_of_records()).step_by(buffer_size_in_records) {
+        
+        let _records_read = mft_reader.read_records_into_buffer(record_index as i64, buffer_size_in_records, &mut buffer[..])?;
+
+        let record_buffer = MftRecordBuffer::new(&mut buffer[..], record_index as u64);
+
+        for mft_record in record_buffer.iter() {
+            match mft_record {
+                Ok(Some(record)) => {
+                    if let Some(item) = Item::new(&record) {
+                        mft_info.add_item(item);
                     }
+
+                    //println!("#{} -> {:?} {:?}", record.id, record.file_type, record.usage_status);
                 },
                 Ok(None) => {
-                    //println!("# {}: Empty, skipping", record_id)
+                    //println!("NONENONE");
                 }
-                Err(err) => println!("# {}: Error: {}", record_id, err)
+                Err(err) => {
+                    //println!("Error: {}", err)
+                },
+                _ => {}
             }
-        });
-
-        let enumerate_time = enumerate_start.elapsed();
-
-        println!("Read time: {:?}  Enumerate time: {:?}", read_time, enumerate_time);
-        //println!("Directories: {:#?}", directories);
-
-        // Little benchmark for reading entire MFT, on the SATA SSD it's about 450 MB/s unoptimized, on the NVMe it's about 1300MB/s unoptimized
-        */
-        /*let read_start = Instant::now();
-        let mut offset : i64 = 0;
-        let mut bytes_read :i64 = 0;
-        while true {
-            let result = mft_reader.read_records_into_buffer(offset as i64, buffer_size_in_records, &mut buffer[..]);
-            if result.is_err() {
-                break;
-            }
-            offset += buffer_size_in_records as i64;
-            bytes_read += buffer.len() as i64;
         }
-
-        println!("ReadFile duration for buffer of size {} to read {} bytes: {:?}", buffer.len(), bytes_read, read_start.elapsed());
-
-        println!("{} {} {} {}", buffer[0] as char, buffer[1] as char, buffer[2] as char, buffer[3] as char)
-
-
     }
-}*/
+
+    if let Some(item) = mft_info.get_root_item() {
+        println!("* {}  ({} bytes)", item.name, item.get_total_size());
+        for item_index in &item.sub_item_indexes {
+            if let Some(sub_item) = mft_info.get_item_by_index(*item_index) {
+                println!("|- {}{}  ({} bytes)", sub_item.name, if sub_item.is_directory { "/" } else { " " }, sub_item.get_total_size());
+            }
+        }
+    }
+
+
+    Ok(())
+}

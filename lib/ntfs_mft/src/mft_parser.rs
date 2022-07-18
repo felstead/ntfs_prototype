@@ -44,6 +44,61 @@ pub struct MftRecord<'a> {
     pub file_data_info : Option<MftFileDataInfo<'a>>
 }
 
+pub struct MftRecordBuffer<'a> {
+    first_record_id : u64,
+    buffer : &'a mut [u8]
+}
+
+impl<'a> MftRecordBuffer<'a> {
+    pub fn new(buffer : &'a mut [u8], first_record_id : u64) -> Self {
+        MftRecordBuffer {
+            first_record_id,
+            buffer
+        }
+    }
+
+    pub fn get_mutable_buffer(&mut self) -> &mut[u8] {
+        &mut self.buffer
+    }
+
+    pub fn get_buffer(&self) -> &[u8] {
+        &self.buffer
+    }
+
+    pub fn set_first_record_id(&mut self, id : u64) {
+        self.first_record_id = id;
+    }
+
+    pub fn iter(&'a self) -> MftRecordBufferIterator<'a> {
+        MftRecordBufferIterator::<'a> { parent: &self, current_record_offset: 0 }
+    }
+}
+
+pub struct MftRecordBufferIterator<'a> {
+    parent : &'a MftRecordBuffer<'a>,
+    current_record_offset: usize
+}
+
+impl<'a> Iterator for MftRecordBufferIterator<'a> {
+    type Item = Result<Option<MftRecord<'a>>, String>;
+
+    fn next(&mut self) -> Option<Result<Option<MftRecord<'a>>, String>> {
+        let max_offset = self.parent.buffer.len() - MFT_RECORD_SIZE;
+        let current_record_id = (self.current_record_offset / MFT_RECORD_SIZE) as u64 + self.parent.first_record_id; 
+        
+        if self.current_record_offset < max_offset {
+            let record_slice : &'a [u8] = &self.parent.buffer[self.current_record_offset..self.current_record_offset+MFT_RECORD_SIZE];
+            let result = read_single_mft_record(record_slice, current_record_id);
+
+            self.current_record_offset += MFT_RECORD_SIZE;
+
+            Some(result)
+        } else {
+            None
+        }
+    }
+}
+
 pub fn enumerate_mft_records(buffer : &[u8], record_id_start : u64, mut reader_func: impl FnMut(u64, Result<Option<MftRecord>, String>)) {
     let mut offset = 0;
     let max_offset = buffer.len() - MFT_RECORD_SIZE;

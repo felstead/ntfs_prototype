@@ -7,16 +7,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in library 'ntfs-mft-reader'",
+            "name": "Debug unit tests in library 'ntfs-mft'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
                     "--lib",
-                    "--package=ntfs-mft-reader"
+                    "--package=ntfs-mft"
                 ],
                 "filter": {
-                    "name": "ntfs-mft-reader",
+                    "name": "ntfs-mft",
                     "kind": "lib"
                 }
             },
@@ -26,34 +26,34 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'ntfs-mft-reader'",
+            "name": "Debug executable 'ntfs-mft-utils'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=ntfs-mft-reader",
-                    "--package=ntfs-mft-reader"
+                    "--bin=ntfs-mft-utils",
+                    "--package=ntfs-mft-utils"
                 ],
                 "filter": {
-                    "name": "ntfs-mft-reader",
+                    "name": "ntfs-mft-utils",
                     "kind": "bin"
                 }
             },
-            "args": [],
+            "args": ["info", "c:\\temp\\mft.dat"],
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'ntfs-mft-reader'",
+            "name": "Debug unit tests in executable 'ntfs-mft-utils'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=ntfs-mft-reader",
-                    "--package=ntfs-mft-reader"
+                    "--bin=ntfs-mft-utils",
+                    "--package=ntfs-mft-utils"
                 ],
                 "filter": {
-                    "name": "ntfs-mft-reader",
+                    "name": "ntfs-mft-utils",
                     "kind": "bin"
                 }
             },
