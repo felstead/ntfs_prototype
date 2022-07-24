@@ -4,6 +4,87 @@ use std::mem::size_of;
 
 use crate::common::*;
 use crate::ntfs_file_reader::NtfsFileReader;
+use crate::mft_parser::*;
+
+pub struct MftAttributeBuffer<'a> {
+    attribute_type : u32,
+    slice_data : &'a[u8]
+}
+
+impl<'a> MftAttributeBuffer<'a> {
+    pub fn new(slice : &'a [u8]) -> Result<Self, String> {
+        const MIN_ATTRIBUTE_SIZE : usize = 8; // Get this for real
+        if slice.len() < MIN_ATTRIBUTE_SIZE {
+            Err(format!("Attribute slice was not of expected size, got {}, expected at least {}", slice.len(), MIN_ATTRIBUTE_SIZE))
+
+        } else {
+            let attr = MftAttributeBuffer {
+                attribute_type : LittleEndian::read_u32(slice),
+                slice_data : slice
+            };
+            Ok(attr)
+        }
+    }
+
+    pub fn get_attribute_type(&self) -> u32 {
+        self.attribute_type
+    }
+
+    pub fn get_form_code(&self) -> u8 {
+        self.slice_data[ARH_FORM_CODE_OFFSET]
+    }
+
+    /// Returns the data slice for this attribute dependent on the formcode
+    /// If the form code indicates a nonresident attribute it will get the slice from
+    /// the offset of ARH_NONRES_START_OFFSET, and if resident from ARH_RES_LENGTH
+    pub fn get_data_slice(&self) -> &'a [u8] {
+        if self.get_form_code() == FORM_CODE_NONRESIDENT {
+            &self.slice_data[ARH_NONRES_START_OFFSET..]
+        } else {
+            &self.slice_data[ARH_RES_LENGTH..]
+        }
+    }
+}
+
+pub enum MftFileDataInfo<'a> {
+    Resident(MftResidentFileData<'a>),
+    NonResident(MftNonResidentFileData<'a>)
+}
+
+impl<'a> MftFileDataInfo<'a> {
+    pub fn get_file_size(&self) -> u64 { 
+        match self {
+            Self::NonResident(nr) => nr.get_file_size(),
+            Self::Resident(r) => r.get_file_size(),
+        } 
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum FileUsageStatus {
+    Unknown,
+    InUse,
+    Deleted
+}
+
+impl Default for FileUsageStatus {
+    fn default() -> Self {
+        FileUsageStatus::Unknown
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum FileType {
+    Unknown,
+    File,
+    Directory
+}
+
+impl Default for FileType {
+    fn default() -> Self {
+        FileType::Unknown
+    }
+}
 
 pub struct MftStandardInformation<'a> {
     slice_data : &'a[u8]
@@ -70,6 +151,7 @@ impl<'a> MftFileNameInfo<'a> {
     pub const FN_REAL_SIZE_OF_FILE_OFFSET : usize = 48;
     // Some others
     pub const FN_FILE_NAME_LENGTH_CHARS_OFFSET : usize = 64;
+    pub const FN_FILE_NAME_NAMESPACE_OFFSET : usize = 65;
     pub const FN_FILE_NAME_DATA_OFFSET : usize = 66;
 
     pub fn new(slice_data: &'a[u8]) -> Self {
@@ -94,6 +176,8 @@ impl<'a> MftFileNameInfo<'a> {
     pub fn get_allocated_size_of_file(&self) -> u64 { uint_from_slice(self.slice_data, MftFileNameInfo::FN_ALLOCATED_SIZE_OF_FILE_OFFSET) }
 
     pub fn get_real_size_of_file(&self) -> u64 { uint_from_slice(self.slice_data, MftFileNameInfo::FN_REAL_SIZE_OF_FILE_OFFSET) }
+
+    pub fn get_namespace(&self) -> u8 { uint_from_slice(self.slice_data, MftFileNameInfo::FN_FILE_NAME_LENGTH_CHARS_OFFSET) }
 }
 
 pub struct MftResidentFileData <'a> {
@@ -129,14 +213,14 @@ impl<'a> MftNonResidentFileData<'a> {
 
     pub fn get_mapping_pairs_offset(&self) -> u16 { uint_from_slice(&self.slice_data, MftNonResidentFileData::NRFD_MAPPING_PAIRS_OFFSET_OFFSET) }
 
-    pub fn get_allocated_length(&self) -> i64 { int_from_slice(&self.slice_data, MftNonResidentFileData::NRFD_ALLOCATED_LENGTH_OFFSET) }
-    pub fn get_file_size(&self) -> i64 { int_from_slice(&self.slice_data, MftNonResidentFileData::NRFD_FILE_SIZE_OFFSET) }
-    pub fn get_valid_data_length(&self) -> i64 { int_from_slice(&self.slice_data, MftNonResidentFileData::NRFD_VALID_DATA_LENGTH_OFFSET) }
+    pub fn get_allocated_length(&self) -> u64 { uint_from_slice(&self.slice_data, MftNonResidentFileData::NRFD_ALLOCATED_LENGTH_OFFSET) }
+    pub fn get_file_size(&self) -> u64 { uint_from_slice(&self.slice_data, MftNonResidentFileData::NRFD_FILE_SIZE_OFFSET) }
+    pub fn get_valid_data_length(&self) -> u64 { uint_from_slice(&self.slice_data, MftNonResidentFileData::NRFD_VALID_DATA_LENGTH_OFFSET) }
 
     pub fn get_direct_file_reader(&self, bytes_per_cluster : usize) -> Result<NtfsFileReader, String> {
         let mut run_offset = self.get_mapping_pairs_offset() as usize - ARH_NONRES_START_OFFSET;
 
-        let mut runs : NtfsFileReader = NtfsFileReader::new(bytes_per_cluster as i64, self.get_file_size());
+        let mut runs : NtfsFileReader = NtfsFileReader::new(bytes_per_cluster, self.get_file_size());
 
         while run_offset < self.slice_data.len() {
             let current_run = &self.slice_data[run_offset..];

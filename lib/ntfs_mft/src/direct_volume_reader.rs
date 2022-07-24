@@ -260,7 +260,7 @@ impl DirectVolumeMftReader {
         // multiple runs.
         // What we do here is initialize our NtfsFileReader with an initial known run so we can leverage that to get
         // the first MFT record
-        let mut bootstrapped_mft_file_reader = NtfsFileReader::new(self.ntfs_volume_data.BytesPerCluster.into(), self.ntfs_volume_data.BytesPerCluster.into());
+        let mut bootstrapped_mft_file_reader = NtfsFileReader::new(self.ntfs_volume_data.BytesPerCluster as usize, self.ntfs_volume_data.BytesPerCluster.into());
         bootstrapped_mft_file_reader.add_run(self.ntfs_volume_data.Mft2StartLcn, 1);
 
         let mut mft_record_buffer : [u8 ; MFT_RECORD_SIZE] = [0 ; MFT_RECORD_SIZE];
@@ -271,22 +271,19 @@ impl DirectVolumeMftReader {
             return Err(format!("Read invalid number of bytes for MFT record, expected {}, got {}", MFT_RECORD_SIZE, bytes_read));
         }
 
-        let mft_record_result = read_single_mft_record(&mft_record_buffer, 0)?;
-
-        match mft_record_result {
-            Some(MftRecord { file_name_info : Some(mft_file_name), file_data_info : Some(MftFileDataInfo::NonResident(mft_file_data)), .. }) => {
+        if let Some(mft_record) = read_single_mft_record(&mft_record_buffer, 0)? {
+            if let (Some(mft_file_name), Some(MftFileDataInfo::NonResident(mft_file_data))) = (mft_record.get_file_name_info(), mft_record.get_file_data_info()) {
                 if mft_file_name.get_file_name() != "$MFT" {
                     return Err(format!("MFT file_name was not $MFT, got '{}' instead!", mft_file_name.get_file_name()))
                 }
 
                 self.mft_file_reader = mft_file_data.get_direct_file_reader(self.ntfs_volume_data.BytesPerCluster as usize)?;
-            },
-            _ => {
-                return Err("MFT record data was missing!".to_owned())
+                
+                return Ok(());
             }
         }
 
-        Ok(())
+        return Err("MFT record data was missing!".to_owned())
     }
 }
 

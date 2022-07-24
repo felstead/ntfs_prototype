@@ -6,8 +6,9 @@ use std::collections::HashMap;
 use std::fmt::Display;
 
 use ntfs_mft::direct_volume_reader;
-use ntfs_mft::common::MFT_RECORD_SIZE;
-use ntfs_mft::mft_parser::{enumerate_mft_records, FileUsageStatus, FileType as MftFileType, MftRecordBuffer, MftRecord};
+use ntfs_mft::common::{MFT_RECORD_SIZE, FORM_CODE_NONRESIDENT};
+use ntfs_mft::mft_types::{FileType as MftFileType, FileUsageStatus };
+use ntfs_mft::mft_parser::{MftRecord, enumerate_mft_records, MftRecordsChunkBuffer, read_single_mft_record};
 
 use clap::{Parser, Subcommand};
 use ntfs_mft::mft_types::MftFileNameInfo;
@@ -42,6 +43,16 @@ enum Commands {
         /// The target volume or file to read.
         #[clap(value_parser)]
         target: String,
+    },
+    /// Dumps information about a single record from the MFT
+    DisplayRecord {
+        /// The target volume or file to read.
+        #[clap(value_parser)]
+        target: String,
+
+        /// The ID of the record to dump
+        #[clap(value_parser)]
+        record_id: u64
     }
 }
 
@@ -55,6 +66,9 @@ fn main() {
         },
         Commands::Info { target } => {
             info(target)
+        },
+        Commands::DisplayRecord { target, record_id } => {
+            display_record(target, *record_id)
         }
     };
     
@@ -178,8 +192,6 @@ impl MftInfo {
         self.record_id_to_index.insert(item.id, self.records.len());
         self.records.push(item);
     }
-
-
 }
 
 struct Item {
@@ -196,23 +208,28 @@ struct Item {
 
 impl Item {
     fn new(mft_record : &MftRecord) -> Option<Self> {
-        match mft_record {
-            MftRecord { usage_status : FileUsageStatus::InUse, file_name_info : Some(file_name), ..} => {
-                Some(Item {
+
+        if mft_record.usage_status == FileUsageStatus::InUse {
+            if let Some(file_name) = mft_record.get_file_name_info() {
+                let mut file_size = 0;
+                if let Some(file_data) = mft_record.get_file_data_info() {
+                    file_size = file_data.get_file_size();
+                }
+
+                return Some(Item {
                     id : mft_record.id,
                     parent_id : file_name.get_parent_directory_id(),
                     name : file_name.get_file_name().to_owned(),
                     is_directory : mft_record.file_type == MftFileType::Directory,
                     sub_item_indexes : vec!(),
                     sub_items_size : 0,
-                    self_size : file_name.get_real_size_of_file(),
+                    self_size : file_size,
                     sub_item_count : 0
-                })
-            },
-            _ => { 
-                None 
-            }      
+                });
+            }
         }
+
+        return None;
     }
 
     fn get_total_size(&self) -> u64 {
@@ -233,7 +250,7 @@ fn info(target : &String) -> Result<(), String> {
         
         let _records_read = mft_reader.read_records_into_buffer(record_index as i64, buffer_size_in_records, &mut buffer[..])?;
 
-        let record_buffer = MftRecordBuffer::new(&mut buffer[..], record_index as u64);
+        let record_buffer = MftRecordsChunkBuffer::new(&mut buffer[..], record_index as u64);
 
         for mft_record in record_buffer.iter() {
             match mft_record {
@@ -264,6 +281,54 @@ fn info(target : &String) -> Result<(), String> {
         }
     }
 
+
+    Ok(())
+}
+
+fn display_record(target : &String, record_id : u64) -> Result<(), String> {
+    let mut mft_reader = direct_volume_reader::create_mft_reader(target)?;
+
+    let buffer_size_in_records : usize = MFT_RECORD_SIZE; // TODO: Make configurable
+
+    let mut buffer = [0u8 ; MFT_RECORD_SIZE];
+
+    let records_read = mft_reader.read_records_into_buffer(record_id as i64, 1, &mut buffer[..])?;
+
+    let record = read_single_mft_record(&buffer, record_id)?.unwrap();
+
+    println!("Record: #{}", record_id);
+    println!("Entry type: {:?}  Usage status: {:?}", record.file_type, record.usage_status);
+
+    println!("Attributes: ");
+    // Iterate through the attributes and display info about them
+
+    for attr in record.iter() {
+        let attr_type = match attr.get_attribute_type() {
+            0x10 => "$STANDARD_INFORMATION",
+            0x20 => "$ATTRIBUTE_LIST",
+            0x30 => "$FILE_NAME",
+            0x40 => "$OBJECT_ID",
+            0x50 => "$SECURITY_DESCRIPTOR",
+            0x60 => "$VOLUME_NAME",
+            0x70 => "$VOLUME_INFORMATION",
+            0x80 => "$DATA",
+            0x90 => "$INDEX_ROOT",
+            0xA0 => "$INDEX_ALLOCATION",
+            0xB0 => "$BITMAP",
+            0xC0 => "$REPARSE_POINT",
+            0xD0 => "$EA_INFORMATION",
+            0xE0 => "$EA",
+            0xF0 => "$PROPERTY_SET",
+            0x100 => "$LOGGED_UTILITY_STREAM",
+            _ => "UNKNOWN"
+        };
+
+        println!("  {:#x} ({}) of length {} (data is {})", 
+            attr.get_attribute_type(),
+            attr_type,
+            attr.get_data_slice().len(),
+            if (attr.get_form_code() == FORM_CODE_NONRESIDENT) { "non-resident" } else { "resident" });
+    }
 
     Ok(())
 }

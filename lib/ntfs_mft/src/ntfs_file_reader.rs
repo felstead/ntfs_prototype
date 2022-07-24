@@ -14,12 +14,12 @@ pub struct NtfsFileReader {
     last_physical_offset : i64,
     local_offset_runs : Vec<Range<i64>>,
     last_local_offset : i64,
-    cluster_size : i64,
-    _actual_file_size : i64
+    cluster_size : usize,
+    _actual_file_size : u64
 }
 
 impl NtfsFileReader {
-    pub fn new(cluster_size : i64, actual_file_size : i64) -> Self {
+    pub fn new(cluster_size : usize, actual_file_size : u64) -> Self {
         NtfsFileReader { 
             cluster_size,
             _actual_file_size: actual_file_size,
@@ -31,8 +31,8 @@ impl NtfsFileReader {
         //println!("Adding run: {:#x} len {:#x}", cluster_run_start, cluster_run_length);
 
         // Convert the runs (in clusters) to actual byte offsets on disk
-        let physical_run_start = (cluster_run_start * self.cluster_size) + self.last_physical_offset;
-        let physical_run_end = physical_run_start + (cluster_run_length * self.cluster_size);
+        let physical_run_start = (cluster_run_start * self.cluster_size as i64) + self.last_physical_offset;
+        let physical_run_end = physical_run_start + (cluster_run_length * self.cluster_size as i64);
 
         self.physical_offset_runs.push(physical_run_start..physical_run_end);
         self.last_physical_offset = physical_run_start;

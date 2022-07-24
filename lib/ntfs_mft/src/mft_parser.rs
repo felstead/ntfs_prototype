@@ -2,56 +2,110 @@ use byteorder::*;
 use crate::common::*;
 use crate::mft_types::*;
 
-pub enum MftFileDataInfo<'a> {
-    _Resident, // Not implemented
-    NonResident(MftNonResidentFileData<'a>)
-}
-
-#[derive(Debug, PartialEq)]
-pub enum FileUsageStatus {
-    Unknown,
-    InUse,
-    Deleted
-}
-
-impl Default for FileUsageStatus {
-    fn default() -> Self {
-        FileUsageStatus::Unknown
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub enum FileType {
-    Unknown,
-    File,
-    Directory
-}
-
-impl Default for FileType {
-    fn default() -> Self {
-        FileType::Unknown
-    }
-}
-
 #[derive(Default)]
 pub struct MftRecord<'a> {
     pub id : u64,
     pub file_type : FileType,
     pub usage_status : FileUsageStatus,
-    pub standard_information : Option<MftStandardInformation<'a>>,
-    pub file_name_info : Option<MftFileNameInfo<'a>>,
-    pub short_file_name_info : Option<MftFileNameInfo<'a>>,
-    pub file_data_info : Option<MftFileDataInfo<'a>>
+
+    all_attributes : [Option<MftAttributeBuffer<'a>>; 16],
+    attribute_count : usize,
+
+    // Special lookups - TODO: benchmark with and without these
+    /*
+    standard_information_index : Option<usize>,
+    file_name_info_index : Option<usize>,
+    short_file_name_info_index : Option<usize>,
+    */
+
 }
 
-pub struct MftRecordBuffer<'a> {
+impl<'a> MftRecord<'a> {
+
+    pub fn get_all_attributes(&self) -> &[Option<MftAttributeBuffer<'a>>; 16] {
+        &self.all_attributes
+    }
+
+    pub fn get_attribute_count(&self) -> usize {
+        self.attribute_count
+    }
+
+    pub fn add_attribute(&mut self, slice : &'a [u8]) -> Result<(), String> {
+        if self.attribute_count < self.all_attributes.len() {
+            let attr = MftAttributeBuffer::new(slice)?;
+            self.all_attributes[self.attribute_count] = Some(attr);
+            self.attribute_count += 1;
+
+            return Ok(())
+        }
+
+        panic!("Too many attributes!!");
+    }
+
+    pub fn get_standard_information(&'a self) -> Option<MftStandardInformation<'a>> {
+        if let Some(&buffer) = self.get_first_attribute(ATTR_STANDARD_INFORMATION).as_ref() {
+            Some(MftStandardInformation::new(&buffer.get_data_slice()))
+        } else {
+            None
+        }
+    }
+
+    pub fn get_file_name_info(&'a self) -> Option<MftFileNameInfo<'a>> {
+        if let Some(&buffer) = self.get_first_attribute(ATTR_FILE_NAME).as_ref() {
+            // TODO: Get short vs long
+            Some(MftFileNameInfo::new(&buffer.get_data_slice()))
+        } else {
+            None
+        }
+    }
+
+    pub fn get_file_data_info(&'a self) -> Option<MftFileDataInfo<'a>> {
+        if let Some(&buffer) = self.get_first_attribute(ATTR_DATA).as_ref() {
+            if buffer.get_form_code() == FORM_CODE_NONRESIDENT {
+                Some(MftFileDataInfo::NonResident(MftNonResidentFileData::new(buffer.get_data_slice())))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn get_first_attribute(&'a self, attr_type : u32) -> Option<&MftAttributeBuffer<'a>> {
+        self.iter().find(|a| a.get_attribute_type() == attr_type )
+    }
+
+    pub fn iter(&'a self) -> MftRecordAttributeIterator<'a> {
+        MftRecordAttributeIterator { parent: &self, current_record_offset: 0 }
+    }
+}
+
+pub struct MftRecordAttributeIterator<'a> {
+    parent : &'a MftRecord<'a>,
+    current_record_offset: usize
+}
+
+impl<'a> Iterator for MftRecordAttributeIterator<'a> {
+    type Item = &'a MftAttributeBuffer<'a>;
+    
+    fn next(&mut self) -> Option<&'a MftAttributeBuffer<'a>> {
+        if self.current_record_offset < self.parent.get_attribute_count() {
+            self.current_record_offset += 1;
+            Some(&self.parent.all_attributes[self.current_record_offset - 1].as_ref().unwrap())
+        } else {
+            None
+        }
+    }
+}
+
+pub struct MftRecordsChunkBuffer<'a> {
     first_record_id : u64,
     buffer : &'a mut [u8]
 }
 
-impl<'a> MftRecordBuffer<'a> {
+impl<'a> MftRecordsChunkBuffer<'a> {
     pub fn new(buffer : &'a mut [u8], first_record_id : u64) -> Self {
-        MftRecordBuffer {
+        MftRecordsChunkBuffer {
             first_record_id,
             buffer
         }
@@ -69,17 +123,17 @@ impl<'a> MftRecordBuffer<'a> {
         self.first_record_id = id;
     }
 
-    pub fn iter(&'a self) -> MftRecordBufferIterator<'a> {
-        MftRecordBufferIterator::<'a> { parent: &self, current_record_offset: 0 }
+    pub fn iter(&'a self) -> MftRecordsChunkBufferIterator<'a> {
+        MftRecordsChunkBufferIterator::<'a> { parent: &self, current_record_offset: 0 }
     }
 }
 
-pub struct MftRecordBufferIterator<'a> {
-    parent : &'a MftRecordBuffer<'a>,
+pub struct MftRecordsChunkBufferIterator<'a> {
+    parent : &'a MftRecordsChunkBuffer<'a>,
     current_record_offset: usize
 }
 
-impl<'a> Iterator for MftRecordBufferIterator<'a> {
+impl<'a> Iterator for MftRecordsChunkBufferIterator<'a> {
     type Item = Result<Option<MftRecord<'a>>, String>;
 
     fn next(&mut self) -> Option<Result<Option<MftRecord<'a>>, String>> {
@@ -165,12 +219,11 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
             if record_length > 0 && record_length <= MFT_RECORD_SIZE {
 
                 let attribute = &record[attribute_offset..attribute_offset+record_length];
-                let resident_attribute_slice = &attribute[ARH_RES_LENGTH..];
-                let nonresident_attribute_slice = &attribute[ARH_NONRES_START_OFFSET..];
-                let formcode : u8 = attribute[ARH_FORM_CODE_OFFSET];
 
+                mft_record.add_attribute(attribute)?;
+
+                /* 
                 //println!("{:?}", attribute);
-
                 match attribute_type_code {
                     ATTR_STANDARD_INFORMATION => {
                         let std_info = MftStandardInformation::new(resident_attribute_slice);
@@ -178,15 +231,13 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
                         mft_record.standard_information = Some(std_info);
                     },
                     ATTR_FILE_NAME => {
-                        // If there is only one FILE_NAME attribute, it is both the short and long name, if there are two, the first
-                        // is the short name and the second is the lone one
-                        if mft_record.file_name_info.is_none() {
-                            //println!("FIRST: {}", &file_name_info.get_file_name());
-                            mft_record.file_name_info = Some(MftFileNameInfo::new(resident_attribute_slice));
-                            mft_record.short_file_name_info = Some(MftFileNameInfo::new(resident_attribute_slice));
+                        let file_name_info = MftFileNameInfo::new(resident_attribute_slice);
+
+                        // 2 is the short "DOS" namespace, e.g. SOMENA~1.TXT
+                        if file_name_info.get_namespace() == 2 {
+                            mft_record.short_file_name_info = Some(file_name_info);
                         } else {
-                            //println!("SECOND: {}", &file_name_info.get_file_name());
-                            mft_record.file_name_info = Some(MftFileNameInfo::new(resident_attribute_slice));
+                            mft_record.file_name_info = Some(file_name_info);
                         }
                     },
                     ATTR_DATA => {
@@ -195,56 +246,12 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
 
                             mft_record.file_data_info = Some(MftFileDataInfo::NonResident(MftNonResidentFileData::new(nonresident_attribute_slice)));
 
-                            /*let _lowest_vcn = LittleEndian::read_u64(&attribute[ARH_NONRES_LOWEST_VCN_OFFSET..ARH_NONRES_LOWEST_VCN_OFFSET+8]);
-                            let _highest_vcn = LittleEndian::read_u64(&attribute[ARH_NONRES_HIGHEST_VCN_OFFSET..ARH_NONRES_HIGHEST_VCN_OFFSET+8]);
-
-                            let mapping_pairs_offset = LittleEndian::read_u16(&attribute[ARH_NONRES_MAPPING_PAIRS_OFFSET_OFFSET..ARH_NONRES_MAPPING_PAIRS_OFFSET_OFFSET+2]);
-
-                            let _allocated_length = LittleEndian::read_i64(&attribute[ARH_NONRES_ALLOCATED_LENGTH_OFFSET..ARH_NONRES_ALLOCATED_LENGTH_OFFSET+8]);
-                            let file_size = LittleEndian::read_i64(&attribute[ARH_NONRES_FILE_SIZE_OFFSET..ARH_NONRES_FILE_SIZE_OFFSET+8]);
-                            let _valid_data_length = LittleEndian::read_i64(&attribute[ARH_NONRES_VALID_DATA_LENGTH_OFFSET..ARH_NONRES_VALID_DATA_LENGTH_OFFSET+8]);
-
-                            //println!("LVCN: {}  HVCN: {}", lowest_vcn, highest_vcn);
-                            //println!("Allocated length: {}  File size: {}  Valid data len: {}", allocated_length, file_size, valid_data_length);
-
-                            //println!("Mapping pairs offset: {:#x}", mapping_pairs_offset);
-
-                            // Decode the runs
-                            // I don't know how to decode a compressed file yet
-                            if !is_compressed {
-                                let mut run_offset = mapping_pairs_offset as usize;
-
-                                let mut runs : NtfsFileReader = NtfsFileReader::new(4096, file_size);
-    
-                                while run_offset < attribute.len() {
-                                    let current_run = &attribute[run_offset..];
-                                    
-                                    match read_run(current_run) {
-                                        Ok((0,0,0)) => {
-                                            // End of runs, break!
-                                            //println!("End of runs!");
-                                            //println!("{:?}", runs);
-                                            break;
-                                        },
-                                        Ok(res) => {
-                                            //println!("Got run! length: {:#x}  offset: {:#x}  run_size: {}", res.0, res.1, res.2);
-                                            run_offset += res.2;
-                                            runs.add_run(res.1, res.0);
-                                        },
-                                        Err(()) => {
-                                            return Err("Error reading run!!".to_owned());
-                                        }
-                                    }
-                                }
-    
-                                mft_record.file_data_info = Some(MftFileDataInfo::NonResident(runs));    
-                            }*/
                         }
                     },
                     _ => {
                         //println!("Unhandled attribute type: {:#x}", attribute_type_code);
                     }
-                }
+                }*/
             } else {
                 println!("Record {}: Read invalid attribute record size of {} for attribute type {:#x} at offset {:#x}, skipping the rest of the record", record_id, record_length, attribute_type_code, attribute_offset+ARH_RECORD_LENGTH_OFFSET);
                 break;
