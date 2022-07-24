@@ -13,6 +13,8 @@ use ntfs_mft::mft_parser::{MftRecord, enumerate_mft_records, MftRecordsChunkBuff
 use clap::{Parser, Subcommand};
 use ntfs_mft::mft_types::MftFileNameInfo;
 
+use encoding_rs::{WINDOWS_1252};
+
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 #[clap(propagate_version = true)]
@@ -327,8 +329,45 @@ fn display_record(target : &String, record_id : u64) -> Result<(), String> {
             attr.get_attribute_type(),
             attr_type,
             attr.get_data_slice().len(),
-            if (attr.get_form_code() == FORM_CODE_NONRESIDENT) { "non-resident" } else { "resident" });
+            if attr.get_form_code() == FORM_CODE_NONRESIDENT { "non-resident" } else { "resident" });
+
+        println!("Attribute data");
+        hexdump(attr.get_data_slice(), 16, 0);
+
+        println!();
     }
 
     Ok(())
+}
+
+fn hexdump(slice : &[u8], column_count : usize, indent : usize) {
+
+    let header : Vec<String> = (0..column_count).map(|col| format!("{:02x}", col)).collect();
+    println!("     {}", header.join(" "));
+
+    for row_offset in (0..slice.len()).step_by(column_count) {
+        let data_range = row_offset..std::cmp::min(slice.len(), row_offset + column_count);
+        let hex_row : Vec<String> = data_range.clone().map(|i| format!("{:02x}", slice[i])).collect();
+        
+        let ascii_row = String::from_iter(data_range.map(|i| format!("{}", u8_to_char(slice[i]))));
+
+        let hex_row_width = column_count * 3 - 1;
+
+        println!("{:04x} {:hex_row_width$} {}", row_offset, hex_row.join(" "), ascii_row);
+    }
+}
+
+fn u8_to_char(byte : u8) -> char {
+    // From https://en.wikipedia.org/wiki/Unicode_control_characters
+    const CONTROL_CHARS : [char ;  32] = 
+        ['␀','␁','␂','␃','␄','␅','␆','␇','␈','␉','␊','␋','␌','␍','␎','␏',
+        '␐','␑','␒','␓','␔','␕','␖','␗','␘','␙','␚','␛','␜','␝','␞','␟'];
+   
+    match byte {
+        0..=0x1F => CONTROL_CHARS[byte as usize],
+        0x20..=0x7E => byte as char,
+        0x7F => '␡',
+        0x81 | 0x8D | 0x8F | 0x90 | 0x9D => '�',
+        0x80 | _ => WINDOWS_1252.decode_without_bom_handling_and_without_replacement(&[byte ; 1]).unwrap().chars().nth(0).unwrap()
+    }
 }
