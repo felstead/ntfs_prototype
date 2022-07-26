@@ -15,6 +15,8 @@ use ntfs_mft::mft_types::MftFileNameInfo;
 
 use encoding_rs::{WINDOWS_1252};
 
+use colored::*;
+
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 #[clap(propagate_version = true)]
@@ -278,7 +280,7 @@ fn info(target : &String) -> Result<(), String> {
         println!("* {}  ({} bytes)", item.name, item.get_total_size());
         for item_index in &item.sub_item_indexes {
             if let Some(sub_item) = mft_info.get_item_by_index(*item_index) {
-                println!("|- {}{}  ({} bytes)", sub_item.name, if sub_item.is_directory { "/" } else { " " }, sub_item.get_total_size());
+                println!("|- {}{}  ({} bytes) #{}", sub_item.name, if sub_item.is_directory { "/" } else { " " }, sub_item.get_total_size(), sub_item.id);
             }
         }
     }
@@ -296,6 +298,7 @@ fn display_record(target : &String, record_id : u64) -> Result<(), String> {
 
     let records_read = mft_reader.read_records_into_buffer(record_id as i64, 1, &mut buffer[..])?;
 
+    // TODO: Let this handle "None" properly
     let record = read_single_mft_record(&buffer, record_id)?.unwrap();
 
     println!("Record: #{}", record_id);
@@ -343,7 +346,7 @@ fn display_record(target : &String, record_id : u64) -> Result<(), String> {
 fn hexdump(slice : &[u8], column_count : usize, indent : usize) {
 
     let header : Vec<String> = (0..column_count).map(|col| format!("{:02x}", col)).collect();
-    println!("     {}", header.join(" "));
+    println!("     {}", header.join(" ").bold());
 
     for row_offset in (0..slice.len()).step_by(column_count) {
         let data_range = row_offset..std::cmp::min(slice.len(), row_offset + column_count);
@@ -353,7 +356,7 @@ fn hexdump(slice : &[u8], column_count : usize, indent : usize) {
 
         let hex_row_width = column_count * 3 - 1;
 
-        println!("{:04x} {:hex_row_width$} {}", row_offset, hex_row.join(" "), ascii_row);
+        println!("{} {:hex_row_width$} {}", format!("{:04x}", row_offset).bold(), hex_row.join(" "), ascii_row);
     }
 }
 

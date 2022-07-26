@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 clap = { version = "3.2.8", features = ["derive"] }
 encoding_rs = "0.8"
+colored = "2"
 
 [dependencies.ntfs-mft]
 path = "lib/ntfs_mft"
