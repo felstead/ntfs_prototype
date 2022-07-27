@@ -4,6 +4,7 @@ use std::io::Write;
 use std::time::{Instant};
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::ops::Range;
 
 use ntfs_mft::direct_volume_reader;
 use ntfs_mft::common::{MFT_RECORD_SIZE, FORM_CODE_NONRESIDENT};
@@ -335,7 +336,16 @@ fn display_record(target : &String, record_id : u64) -> Result<(), String> {
             if attr.get_form_code() == FORM_CODE_NONRESIDENT { "non-resident" } else { "resident" });
 
         println!("Attribute data");
-        hexdump(attr.get_data_slice(), 16, 0);
+        let mut ranges : Vec::<Range<usize>> = vec!();
+        if attr.get_attribute_type() == 0x30 {
+            let filename = MftFileNameInfo::new(attr.get_data_slice());
+            for f in filename.get_fields() {
+                println!("{}: {:02x}->{:02x}", f.0, f.1.start, f.1.end);
+                ranges.push(f.1);
+            }
+        }
+
+        hexdump(attr.get_data_slice(), 16, 0, &ranges);
 
         println!();
     }
@@ -343,14 +353,39 @@ fn display_record(target : &String, record_id : u64) -> Result<(), String> {
     Ok(())
 }
 
-fn hexdump(slice : &[u8], column_count : usize, indent : usize) {
+fn index_for_range(offset : usize, ranges : &Vec<Range<usize>>) -> Option<usize> {
+    for (index, range) in ranges.iter().enumerate() {
+        if range.contains(&offset) {
+            //println!("{:02x} in {:02x}-{:02x} ({})", offset, range.start, range.end, index);
+            return Some(index)
+        }
+    }
+    None
+}
+
+fn hexdump(slice : &[u8], column_count : usize, indent : usize, ranges : &Vec<Range<usize>>) {
+
+    let palette : Vec<Color> = vec!(Color::Cyan,
+        Color::Red,
+        Color::Green,
+        Color::Yellow,
+        Color::Blue,
+        Color::Magenta,
+        Color::Cyan,
+        Color::White);
 
     let header : Vec<String> = (0..column_count).map(|col| format!("{:02x}", col)).collect();
     println!("     {}", header.join(" ").bold());
 
     for row_offset in (0..slice.len()).step_by(column_count) {
         let data_range = row_offset..std::cmp::min(slice.len(), row_offset + column_count);
-        let hex_row : Vec<String> = data_range.clone().map(|i| format!("{:02x}", slice[i])).collect();
+        let hex_row : Vec<String> = data_range.clone().map(|i| {
+            if let Some(index) = index_for_range(i, ranges) {
+                format!("{:02x}", slice[i]).on_color(palette[index]).to_string()
+            } else {
+                format!("{:02x}", slice[i])
+            }
+        }).collect();
         
         let ascii_row = String::from_iter(data_range.map(|i| format!("{}", u8_to_char(slice[i]))));
 
