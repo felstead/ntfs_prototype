@@ -329,23 +329,33 @@ fn display_record(target : &String, record_id : u64) -> Result<(), String> {
             _ => "UNKNOWN"
         };
 
-        println!("  {:#x} ({}) of length {} (data is {})", 
+        println!("== {:#x} ({}) of length {} (data is {})", 
             attr.get_attribute_type(),
             attr_type,
             attr.get_data_slice().len(),
             if attr.get_form_code() == FORM_CODE_NONRESIDENT { "non-resident" } else { "resident" });
 
-        println!("Attribute data");
+        println!();
+
         let mut ranges : Vec::<Range<usize>> = vec!();
         if attr.get_attribute_type() == 0x30 {
             let filename = MftFileNameInfo::new(attr.get_data_slice());
-            for f in filename.get_fields() {
-                println!("{}: {:02x}->{:02x}", f.0, f.1.start, f.1.end);
-                ranges.push(f.1);
+            for (index, f) in filename.get_fields().iter().enumerate() {
+                let range_string = format!("0x{:02x}-0x{:02x}", f.1.start, f.1.end - 1).on_color(PALETTE[index]).color(Color::Black);
+                if index % 2 == 0 {
+                    print!("{:>25} : {}", f.0.bold(), range_string);
+                } else {
+                    println!("{:>25} : {}", f.0.bold(), range_string);
+                }
+                if filename.get_fields().len() % 2 == 1 { 
+                    println!(); 
+                }
+                ranges.push(f.1.start..f.1.end); // Ugh
             }
         }
 
-        hexdump(attr.get_data_slice(), 16, 0, &ranges);
+        println!();
+        hexdump(attr.get_data_slice(), 16, 4, &ranges);
 
         println!();
     }
@@ -363,35 +373,58 @@ fn index_for_range(offset : usize, ranges : &Vec<Range<usize>>) -> Option<usize>
     None
 }
 
+// This is the Tableau 20 palette
+// https://public.tableau.com/views/TableauColors/ColorPaletteswithRGBValues?%3Aembed=y&%3AshowVizHome=no&%3Adisplay_count=y&%3Adisplay_static_image=y
+const PALETTE : [Color ; 20] = [
+    Color::TrueColor { r: 255, g: 187, b: 120 },
+    Color::TrueColor { r: 255, g: 127, b: 14 },
+    Color::TrueColor { r: 174, g: 199, b: 232 },
+    Color::TrueColor { r: 44, g: 160, b: 44 },
+    Color::TrueColor { r: 31, g: 119, b: 180 },
+    Color::TrueColor { r: 255, g: 152, b: 150 },
+    Color::TrueColor { r: 214, g: 39, b: 40 },
+    Color::TrueColor { r: 197, g: 176, b: 213 },
+    Color::TrueColor { r: 152, g: 223, b: 138 },
+    Color::TrueColor { r: 148, g: 103, b: 189 },
+    Color::TrueColor { r: 247, g: 182, b: 210 },
+    Color::TrueColor { r: 227, g: 119, b: 194 },
+    Color::TrueColor { r: 196, g: 156, b: 148 },
+    Color::TrueColor { r: 140, g: 86, b: 75 },
+    Color::TrueColor { r: 127, g: 127, b: 127 },
+    Color::TrueColor { r: 219, g: 219, b: 141 },
+    Color::TrueColor { r: 199, g: 199, b: 199 },
+    Color::TrueColor { r: 188, g: 189, b: 34 },
+    Color::TrueColor { r: 158, g: 218, b: 229 },
+    Color::TrueColor { r: 23, g: 190, b: 207 }];
+
 fn hexdump(slice : &[u8], column_count : usize, indent : usize, ranges : &Vec<Range<usize>>) {
 
-    let palette : Vec<Color> = vec!(Color::Cyan,
-        Color::Red,
-        Color::Green,
-        Color::Yellow,
-        Color::Blue,
-        Color::Magenta,
-        Color::Cyan,
-        Color::White);
-
     let header : Vec<String> = (0..column_count).map(|col| format!("{:02x}", col)).collect();
-    println!("     {}", header.join(" ").bold());
+    println!("{:indent$}     {}", "", header.join(" ").bold());
 
+    // This is really ugly and inefficient, come back to this
     for row_offset in (0..slice.len()).step_by(column_count) {
         let data_range = row_offset..std::cmp::min(slice.len(), row_offset + column_count);
         let hex_row : Vec<String> = data_range.clone().map(|i| {
             if let Some(index) = index_for_range(i, ranges) {
-                format!("{:02x}", slice[i]).on_color(palette[index]).to_string()
+                format!("{:02x}", slice[i]).on_color(PALETTE[index]).color(Color::Black).to_string()
             } else {
                 format!("{:02x}", slice[i])
             }
         }).collect();
         
-        let ascii_row = String::from_iter(data_range.map(|i| format!("{}", u8_to_char(slice[i]))));
+        let ascii_row = String::from_iter(data_range.clone().map(|i| {
+            if let Some(index) = index_for_range(i, ranges) {
+                format!("{}", u8_to_char(slice[i])).on_color(PALETTE[index]).color(Color::Black).to_string()
+            } else {
+                format!("{}", u8_to_char(slice[i]))
+            }
+        }));
 
         let hex_row_width = column_count * 3 - 1;
+        let padding = hex_row_width - ((data_range.end - data_range.start) * 3 - 1);
 
-        println!("{} {:hex_row_width$} {}", format!("{:04x}", row_offset).bold(), hex_row.join(" "), ascii_row);
+        println!("{:indent$}{} {}{:padding$}  {}", "", format!("{:04x}", row_offset).bold(), hex_row.join(" "), "", ascii_row);
     }
 }
 
