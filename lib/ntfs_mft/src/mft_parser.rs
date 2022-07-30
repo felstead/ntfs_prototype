@@ -214,7 +214,7 @@ pub fn read_single_mft_record(record : &[u8], record_id : u64) -> Result<Option<
             // While the record length is a u32, it seems like only the bottom 16 bits are the record length.
             // Am I messing this up with an ATTRIBUTE_LIST_ENTRY?
             let record_length = LittleEndian::read_u16(&record[attribute_offset+ARH_RECORD_LENGTH_OFFSET..attribute_offset+ARH_RECORD_LENGTH_OFFSET+2]) as usize;
-            //println!("Reading attribute at offset {:#x}-{:#x}, type code {:#x}, record length: {}", attribute_offset, attribute_offset + record_length, attribute_type_code, record_length);
+//            println!("Reading attribute at offset {:#x}-{:#x}, type code {:#x}, record length: {}", attribute_offset, attribute_offset + record_length, attribute_type_code, record_length);
 
             if record_length > 0 && record_length <= MFT_RECORD_SIZE {
 

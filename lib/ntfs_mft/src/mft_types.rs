@@ -106,33 +106,47 @@ fn int_from_slice<T : TryFrom<i64> + Default>(slice_data : &[u8], offset : usize
     LittleEndian::read_int(&slice_data[offset..offset+size_of::<T>()], size_of::<T>()).try_into().unwrap_or_default()
 }
 
-
 #[allow(dead_code)]
 impl<'a> MftStandardInformation<'a> {
     // == STANDARD_INFORMATION offsets
-    pub const SI_CREATE_TIMESTAMP_OFFSET : usize = 0;
-    pub const SI_ALTERED_TIMESTAMP_OFFSET : usize = 8;
-    pub const SI_MFT_CHANGED_TIMESTAMP_OFFSET : usize = 16;
-    pub const SI_READ_TIMESTAMP_OFFSET : usize = 24;
-    pub const SI_PERMISSIONS_OFFSET : usize = 32;
-    pub const SI_MAX_VERSIONS_OFFSET : usize = 36;
-    pub const SI_VERSION_NUMBER_OFFSET : usize = 40;
-    pub const SI_CLASS_ID_OFFSET : usize = 44;
-    pub const SI_OWNER_ID_OFFSET : usize = 48;
-    pub const SI_SECURITY_ID_OFFSET : usize = 52;
-    pub const SI_QUOTA_CHARGED_OFFSET : usize = 56;
-    pub const SI_USN_OFFSET : usize = 62;
-
-    const SI_PERMISSIONS : StaticDataField<'a, u32> = StaticDataField::<u32>::new( "Permissions", MftStandardInformation::SI_PERMISSIONS_OFFSET);
+    const SI_CREATE_TIMESTAMP : AttributeDataField<'a, FILETIME> = AttributeDataField::<FILETIME>::new( "CreatedTimestamp", 0x00);
+    const SI_ALTERED_TIMESTAMP : AttributeDataField<'a, FILETIME> = AttributeDataField::<FILETIME>::new( "AlteredTimestamp", 0x08);
+    const SI_MFT_CHANGED_TIMESTAMP : AttributeDataField<'a, FILETIME> = AttributeDataField::<FILETIME>::new( "ChangedTimestamp", 0x10);
+    const SI_READ_TIMESTAMP : AttributeDataField<'a, FILETIME> = AttributeDataField::<FILETIME>::new( "ReadTimestamp", 0x18);
+    const SI_PERMISSIONS : AttributeDataField<'a, u32> = AttributeDataField::<u32>::new( "Permissions", 0x20);
+    const SI_MAX_VERSIONS : AttributeDataField<'a, u32> = AttributeDataField::<u32>::new( "MaxVersions", 0x24);
+    const SI_VERSION_NUMBER : AttributeDataField<'a, u32> = AttributeDataField::<u32>::new( "VersionNumber", 0x28);
+    const SI_CLASS_ID : AttributeDataField<'a, u32> = AttributeDataField::<u32>::new( "ClassId", 0x2C);
+    const SI_OWNER_ID : AttributeDataField<'a, u32> = AttributeDataField::<u32>::new( "OwnerId", 0x30);
+    const SI_SECURITY_ID : AttributeDataField<'a, u32> = AttributeDataField::<u32>::new( "SecurityId", 0x34);
+    const SI_QUOTA_CHARGED : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new( "QuotaCharged", 0x38);
+    const SI_USN : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new( "Usn", 0x40);
 
     pub fn new(slice_data: &'a[u8]) -> Self {
         Self { slice_data }
     }
 
-    pub fn get_create_timestamp(&self) -> FILETIME { filetime_from_slice(self.slice_data, MftStandardInformation::SI_CREATE_TIMESTAMP_OFFSET ) }
-    pub fn get_altered_timestamp(&self) -> FILETIME { filetime_from_slice(self.slice_data, MftStandardInformation::SI_ALTERED_TIMESTAMP_OFFSET ) }
-    pub fn get_mft_changed_timestamp(&self) -> FILETIME { filetime_from_slice(self.slice_data, MftStandardInformation::SI_MFT_CHANGED_TIMESTAMP_OFFSET ) }
-    pub fn get_read_timestamp(&self) -> FILETIME { filetime_from_slice(self.slice_data, MftStandardInformation::SI_READ_TIMESTAMP_OFFSET ) }
+    pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
+        vec!(
+            MftStandardInformation::SI_CREATE_TIMESTAMP.get_display_info(self.slice_data),
+            MftStandardInformation::SI_ALTERED_TIMESTAMP.get_display_info(self.slice_data),
+            MftStandardInformation::SI_MFT_CHANGED_TIMESTAMP.get_display_info(self.slice_data),
+            MftStandardInformation::SI_READ_TIMESTAMP.get_display_info(self.slice_data),
+            MftStandardInformation::SI_PERMISSIONS.get_display_info(self.slice_data),
+            MftStandardInformation::SI_MAX_VERSIONS.get_display_info(self.slice_data),
+            MftStandardInformation::SI_VERSION_NUMBER.get_display_info(self.slice_data),
+            MftStandardInformation::SI_CLASS_ID.get_display_info(self.slice_data),
+            MftStandardInformation::SI_OWNER_ID.get_display_info(self.slice_data),
+            MftStandardInformation::SI_SECURITY_ID.get_display_info(self.slice_data),
+            MftStandardInformation::SI_QUOTA_CHARGED.get_display_info(self.slice_data),
+            MftStandardInformation::SI_USN.get_display_info(self.slice_data),
+        )
+    }
+
+    pub fn get_create_timestamp(&self) -> FILETIME { MftStandardInformation::SI_CREATE_TIMESTAMP.read(self.slice_data) }
+    pub fn get_altered_timestamp(&self) -> FILETIME { MftStandardInformation::SI_ALTERED_TIMESTAMP.read(self.slice_data) }
+    pub fn get_mft_changed_timestamp(&self) -> FILETIME { MftStandardInformation::SI_MFT_CHANGED_TIMESTAMP.read(self.slice_data) }
+    pub fn get_read_timestamp(&self) -> FILETIME { MftStandardInformation::SI_READ_TIMESTAMP.read(self.slice_data) }
 
     pub fn get_permissions(&self) -> u32 { MftStandardInformation::SI_PERMISSIONS.read(self.slice_data) }
 }
@@ -158,27 +172,27 @@ impl<'a> MftFileNameInfo<'a> {
     pub const FN_FILE_NAME_NAMESPACE_OFFSET : usize = 65;
     pub const FN_FILE_NAME_DATA_OFFSET : usize = 66;
 
-    const FN_PARENT_DIR_REFERENCE : StaticDataField<'a, u48> = StaticDataField::<u48>::new("ParentDataDirId", 0x0);
-    const FN_ALLOCATED_SIZE_OF_FILE : StaticDataField<'a, u64> = StaticDataField::<u64>::new("AllocatedSizeOfFile", 0x28);
-    const FN_REAL_SIZE_OF_FILE : StaticDataField<'a, u64> = StaticDataField::<u64>::new("RealSizeOfFile", 0x30);
+    const FN_PARENT_DIR_REFERENCE : AttributeDataField<'a, u48> = AttributeDataField::<u48>::new("ParentDataDirId", 0x0);
+    const FN_ALLOCATED_SIZE_OF_FILE : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("AllocatedSizeOfFile", 0x28);
+    const FN_REAL_SIZE_OF_FILE : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("RealSizeOfFile", 0x30);
 
-    const FN_FILE_NAME_LENGTH : StaticDataField<'a, u8> = StaticDataField::<u8>::new("FileNameLengthInChars", 0x40);
-    const FN_FILE_NAME_NAMESPACE : StaticDataField<'a, u8> = StaticDataField::<u8>::new("Namespace", 0x41);
+    const FN_FILE_NAME_LENGTH : AttributeDataField<'a, u8> = AttributeDataField::<u8>::new("FileNameLengthInChars", 0x40);
+    const FN_FILE_NAME_NAMESPACE : AttributeDataField<'a, u8> = AttributeDataField::<u8>::new("Namespace", 0x41);
 
-    const FN_FILE_NAME : StaticDataField<'a, &'a [u8]> = StaticDataField::<&'a [u8]>::new_dynamic("FileNameData", 0x42, |slice| { MftFileNameInfo::FN_FILE_NAME_LENGTH.read(slice) as usize * 2 });
+    const FN_FILE_NAME : AttributeDataField<'a, &'a [u8]> = AttributeDataField::<&'a [u8]>::new_dynamic("FileNameData", 0x42, |slice| { MftFileNameInfo::FN_FILE_NAME_LENGTH.read(slice) as usize * 2 });
 
     pub fn new(slice_data: &'a[u8]) -> Self {
         Self { slice_data }
     }
 
-    pub fn get_fields(&self) -> Vec<(&'static str, Range<usize>)> {
+    pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
         vec!(
-            (MftFileNameInfo::FN_PARENT_DIR_REFERENCE.get_name(), MftFileNameInfo::FN_PARENT_DIR_REFERENCE.get_range(self.slice_data)),
-            (MftFileNameInfo::FN_ALLOCATED_SIZE_OF_FILE.get_name(), MftFileNameInfo::FN_ALLOCATED_SIZE_OF_FILE.get_range(self.slice_data)),
-            (MftFileNameInfo::FN_REAL_SIZE_OF_FILE.get_name(), MftFileNameInfo::FN_REAL_SIZE_OF_FILE.get_range(self.slice_data)),
-            (MftFileNameInfo::FN_FILE_NAME_LENGTH.get_name(), MftFileNameInfo::FN_FILE_NAME_LENGTH.get_range(self.slice_data)),
-            (MftFileNameInfo::FN_FILE_NAME_NAMESPACE.get_name(), MftFileNameInfo::FN_FILE_NAME_NAMESPACE.get_range(self.slice_data)),
-            (MftFileNameInfo::FN_FILE_NAME.get_name(), MftFileNameInfo::FN_FILE_NAME.get_range(self.slice_data)),
+            MftFileNameInfo::FN_PARENT_DIR_REFERENCE.get_display_info(self.slice_data),
+            MftFileNameInfo::FN_ALLOCATED_SIZE_OF_FILE.get_display_info(self.slice_data),
+            MftFileNameInfo::FN_REAL_SIZE_OF_FILE.get_display_info(self.slice_data),
+            MftFileNameInfo::FN_FILE_NAME_LENGTH.get_display_info(self.slice_data),
+            MftFileNameInfo::FN_FILE_NAME_NAMESPACE.get_display_info(self.slice_data),
+            MftFileNameInfo::FN_FILE_NAME.get_display_info(self.slice_data),
         )
     }
 
@@ -212,7 +226,15 @@ pub struct MftResidentFileData <'a> {
 impl<'a> MftResidentFileData<'a> {
     const RFD_FILE_SIZE_OFFSET : usize = 0;
 
-    pub fn get_file_size(&self) -> u64 { uint_from_slice(&self.slice_data, MftResidentFileData::RFD_FILE_SIZE_OFFSET) }
+    const RFD_FILE_SIZE : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("FileSize", 0x0);
+
+    pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
+        vec!(
+            MftResidentFileData::RFD_FILE_SIZE.get_display_info(self.slice_data)
+        )
+    }
+
+    pub fn get_file_size(&self) -> u64 { MftResidentFileData::RFD_FILE_SIZE.read(self.slice_data) }
 }
 
 pub struct MftNonResidentFileData <'a> {
@@ -227,9 +249,36 @@ impl<'a> MftNonResidentFileData<'a> {
     pub const NRFD_ALLOCATED_LENGTH_OFFSET : usize = 24;
     pub const NRFD_FILE_SIZE_OFFSET : usize = 32;
     pub const NRFD_VALID_DATA_LENGTH_OFFSET : usize = 40;
+    pub const NRFD_TOTAL_ALLOCATED_OFFSET : usize = 48;
     
+    const NRFD_LOWEST_VCN : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("LowestVcn", 0x00);
+    const NRFD_HIGHEST_VCN : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("HighestVcn", 0x08);
+    const NRFD_MAPPING_PAIRS_OFFSET : AttributeDataField<'a, u16> = AttributeDataField::<u16>::new("MappingPairsOffset", 0x10);
+    const NRFD_ALLOCATED_LENGTH : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("AllocatedLength", 0x18);
+    const NRFD_FILE_SIZE : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("FileSize", 0x20);
+    const NRFD_VALID_DATA_LENGTH : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("ValidDataLength", 0x28);
+
+    const NRFD_DATA_RUNS : AttributeDataField<'a, &'a [u8]> = AttributeDataField::<&'a [u8]>::new_dynamic("DataRuns", 0x30, |slice| { slice.len() - 0x30 });
+    // This field is only valid for compressed data apparently
+        //  Totally allocated.  This field is only present for the first
+        //  file record of a compressed stream.  It represents the sum of
+        //  the allocated clusters for a file.
+    //const NRFD_TOTAL_ALLOCATED : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("TotalAllocated", 0x30);
+
     pub fn new(slice_data: &'a[u8]) -> Self {
         Self { slice_data }
+    }
+
+    pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
+        vec!(
+            MftNonResidentFileData::NRFD_LOWEST_VCN.get_display_info(self.slice_data),
+            MftNonResidentFileData::NRFD_HIGHEST_VCN.get_display_info(self.slice_data),
+            MftNonResidentFileData::NRFD_MAPPING_PAIRS_OFFSET.get_display_info(self.slice_data),
+            MftNonResidentFileData::NRFD_ALLOCATED_LENGTH.get_display_info(self.slice_data),
+            MftNonResidentFileData::NRFD_FILE_SIZE.get_display_info(self.slice_data),
+            MftNonResidentFileData::NRFD_VALID_DATA_LENGTH.get_display_info(self.slice_data),
+            MftNonResidentFileData::NRFD_DATA_RUNS.get_display_info(self.slice_data),
+        )
     }
 
     pub fn get_lowest_vcn(&self) -> u64 { uint_from_slice(&self.slice_data, MftNonResidentFileData::NRFD_LOWEST_VCN_OFFSET) }

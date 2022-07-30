@@ -8,7 +8,7 @@ use std::ops::Range;
 
 use ntfs_mft::direct_volume_reader;
 use ntfs_mft::common::{MFT_RECORD_SIZE, FORM_CODE_NONRESIDENT};
-use ntfs_mft::mft_types::{FileType as MftFileType, FileUsageStatus };
+use ntfs_mft::mft_types::{FileType as MftFileType, FileUsageStatus, MftStandardInformation, MftNonResidentFileData };
 use ntfs_mft::mft_parser::{MftRecord, enumerate_mft_records, MftRecordsChunkBuffer, read_single_mft_record};
 
 use clap::{Parser, Subcommand};
@@ -17,6 +17,7 @@ use ntfs_mft::mft_types::MftFileNameInfo;
 use encoding_rs::{WINDOWS_1252};
 
 use colored::*;
+use ntfs_mft::slice_utils::AttributeDisplayInfo;
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -338,19 +339,31 @@ fn display_record(target : &String, record_id : u64) -> Result<(), String> {
         println!();
 
         let mut ranges : Vec::<Range<usize>> = vec!();
+        let mut field_display_info : Vec<AttributeDisplayInfo> = vec!();
         if attr.get_attribute_type() == 0x30 {
             let filename = MftFileNameInfo::new(attr.get_data_slice());
-            for (index, f) in filename.get_fields().iter().enumerate() {
-                let range_string = format!("0x{:02x}-0x{:02x}", f.1.start, f.1.end - 1).on_color(PALETTE[index]).color(Color::Black);
+            field_display_info = filename.get_field_display_info();
+        } else if attr.get_attribute_type() == 0x10 {
+            let stdinfo = MftStandardInformation::new(attr.get_data_slice());
+            field_display_info = stdinfo.get_field_display_info();
+        } else if attr.get_attribute_type() == 0x80 && attr.get_form_code() == FORM_CODE_NONRESIDENT {
+            let data = MftNonResidentFileData::new(attr.get_data_slice());
+            field_display_info = data.get_field_display_info();
+        }
+
+        if field_display_info.len() > 0 {
+            for (index, f) in field_display_info.iter().enumerate() {
+                let range_string = format!("0x{:02x}-0x{:02x}", f.range.start, f.range.end - 1).on_color(PALETTE[index]).color(Color::Black);
                 if index % 2 == 0 {
-                    print!("{:>25} : {}", f.0.bold(), range_string);
+                    print!("{:>25} : {}", f.name.bold(), range_string);
                 } else {
-                    println!("{:>25} : {}", f.0.bold(), range_string);
-                }
-                if filename.get_fields().len() % 2 == 1 { 
-                    println!(); 
-                }
-                ranges.push(f.1.start..f.1.end); // Ugh
+                    println!("{:>25} : {}", f.name.bold(), range_string);
+                }    
+                ranges.push(f.range.start..f.range.end); // Ugh
+            }
+
+            if field_display_info.len() % 2 == 1 { 
+                println!(); 
             }
         }
 

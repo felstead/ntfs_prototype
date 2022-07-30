@@ -3,15 +3,21 @@ use byteorder::*;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::ops::Range;
+use windows_sys::Win32::Foundation::FILETIME;
 
-pub struct StaticDataField<'a, T : SliceReadable<'a, T>> {
+pub struct AttributeDataField<'a, T : SliceReadable<'a, T>> {
     name : &'static str,
     offset : usize,
     dynamic_size : Option<fn(&'a [u8]) -> usize>,
     phantom : PhantomData<T>
 }
 
-impl<'a, T : SliceReadable<'a, T>> StaticDataField<'a, T> {
+pub struct AttributeDisplayInfo {
+    pub name : &'static str,
+    pub range : Range<usize>
+}
+
+impl<'a, T : SliceReadable<'a, T>> AttributeDataField<'a, T> {
     pub fn read(&self, slice : &'a [u8]) -> T {
         T::read(slice, self.offset, self.get_size(slice))
     }
@@ -31,12 +37,16 @@ impl<'a, T : SliceReadable<'a, T>> StaticDataField<'a, T> {
         self.name
     }
 
+    pub fn get_display_info(&self, slice : &'a [u8]) -> AttributeDisplayInfo {
+        AttributeDisplayInfo { name:  self.name, range: self.get_range(slice) }
+    }
+
     pub const fn new(name : &'static str, offset : usize) -> Self {
-        StaticDataField { name, offset, phantom: PhantomData, dynamic_size: None }
+        AttributeDataField { name, offset, phantom: PhantomData, dynamic_size: None }
     }
 
     pub const fn new_dynamic(name : &'static str, offset : usize, size_fn : fn(&'a [u8]) -> usize) -> Self {
-        StaticDataField { name, offset, phantom: PhantomData, dynamic_size: Some(size_fn) }
+        AttributeDataField { name, offset, phantom: PhantomData, dynamic_size: Some(size_fn) }
     }
 }
 
@@ -64,6 +74,16 @@ impl<'a> SliceReadable<'a, u8> for u8 {
 impl<'a> SliceReadable<'a, &'a [u8]> for &'a [u8] {
     fn read(slice : &'a [u8], offset : usize, size : usize) -> &'a [u8] {
         &slice[offset..offset+size]
+    }
+}
+
+// FILETIME
+impl<'a> SliceReadable<'a, FILETIME> for FILETIME {
+    fn read(slice : &[u8], offset : usize, _size : usize) -> FILETIME { 
+        FILETIME { 
+            dwLowDateTime : LittleEndian::read_u32(&slice[offset..offset+4]), 
+            dwHighDateTime : LittleEndian::read_u32(&slice[offset+4..offset+8])
+        }
     }
 }
 
