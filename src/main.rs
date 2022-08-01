@@ -152,13 +152,16 @@ impl MftInfo {
     }
 
     fn add_item(&mut self, mut item : Item) {
-        // Check for children and add their info if we have them
+        if item.parent_id == 2147 {
+            println!("TR");
+        }
+
+        // Check for children and add their info if we have them        
         if item.is_directory {
             if let Some(new_children) = self.unparented_items.remove(&item.id) {
-                for item_index in new_children {
-                    let child_record = &self.records[item_index];
-                    item.sub_items_size += child_record.self_size;
-                    item.sub_item_indexes.push(item_index);
+                for child_index in new_children {
+                    let child_record = &self.records[child_index];
+                    item.add_child(child_record, child_index, true)
                 }
             }
         }
@@ -168,21 +171,19 @@ impl MftInfo {
         // Aggregate this to parents
         let mut parent_id = item.parent_id;
         let mut parent_count = 0;
+
         while let Some(parent_record_index) = self.record_id_to_index.get(&parent_id) {
-            let mut parent_record = &mut self.records[*parent_record_index];
+            let parent_record = &mut self.records[*parent_record_index];
 
-            // If this is the direct parent, add the item to the sub item IDs
-            if parent_record.id == item.parent_id {
-                parent_record.sub_item_indexes.push(new_item_index)
-            }
+            let is_direct_parent = parent_record.id == item.parent_id;
 
-            parent_record.sub_items_size += item.get_total_size();
+            parent_record.add_child(&item, new_item_index, is_direct_parent);
 
-            if parent_id == parent_record.id  {
+            if parent_id == parent_record.parent_id {
                 break;
             } else {
-                parent_id = parent_record.id;
                 parent_count += 1;
+                parent_id = parent_record.parent_id;
             }
         }
 
@@ -191,11 +192,9 @@ impl MftInfo {
             let unparented_items = self.unparented_items.entry(item.parent_id).or_default();
             unparented_items.push(new_item_index);
         }
-        
-        //println!("Adding {} - {}", &item.id, &item.name);
 
         // Add item to collections
-        self.record_id_to_index.insert(item.id, self.records.len());
+        self.record_id_to_index.insert(item.id, new_item_index);
         self.records.push(item);
     }
 }
@@ -238,10 +237,26 @@ impl Item {
         return None;
     }
 
+    fn add_child(&mut self, child : &Item, child_index : usize, is_direct_parent : bool) {
+        if !self.is_directory {
+            panic!("Adding child to non-directory!")
+        }
+
+        if is_direct_parent {
+            self.sub_item_indexes.push(child_index);
+        }
+        self.sub_item_count += child.get_total_count();
+        self.sub_items_size += child.get_total_size();
+    }
+
     fn get_total_size(&self) -> u64 {
         return self.self_size + self.sub_items_size;
     }
-}
+
+    fn get_total_count(&self) -> u64 {
+        self.sub_item_count + 1
+    }
+ }
 
 fn info(target : &String) -> Result<(), String> {
     let mut mft_reader = direct_volume_reader::create_mft_reader(target)?;
@@ -282,7 +297,13 @@ fn info(target : &String) -> Result<(), String> {
         println!("* {}  ({} bytes)", item.name, item.get_total_size());
         for item_index in &item.sub_item_indexes {
             if let Some(sub_item) = mft_info.get_item_by_index(*item_index) {
-                println!("|- {}{}  ({} bytes) #{}", sub_item.name, if sub_item.is_directory { "/" } else { " " }, sub_item.get_total_size(), sub_item.id);
+                println!("|- {}{}  ({} bytes, {} items) #{}", sub_item.name, if sub_item.is_directory { "/" } else { " " }, sub_item.get_total_size(), sub_item.get_total_count(), sub_item.id);
+                
+                for sub_item_index in &sub_item.sub_item_indexes {
+                    if let Some(sub_sub_item) = mft_info.get_item_by_index(*sub_item_index) {
+                        println!("  |- {}{}  ({} bytes, {} items) #{}", sub_sub_item.name, if sub_sub_item.is_directory { "/" } else { " " }, sub_sub_item.get_total_size(), sub_sub_item.get_total_count(), sub_sub_item.id);
+                    }
+                }
             }
         }
     }

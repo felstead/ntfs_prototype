@@ -51,12 +51,10 @@ impl<'a> MftRecord<'a> {
     }
 
     pub fn get_file_name_info(&'a self) -> Option<MftFileNameInfo<'a>> {
-        if let Some(&buffer) = self.get_first_attribute(ATTR_FILE_NAME).as_ref() {
-            // TODO: Get short vs long
-            Some(MftFileNameInfo::new(&buffer.get_data_slice()))
-        } else {
-            None
-        }
+        self.iter()
+            .filter(|a| a.get_attribute_type() == ATTR_FILE_NAME)
+            .map(|a| MftFileNameInfo::new(a.get_data_slice()))
+            .find(|a| a.get_namespace() != 2) // 2 is DOS
     }
 
     pub fn get_file_data_info(&'a self) -> Option<MftFileDataInfo<'a>> {

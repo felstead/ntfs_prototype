@@ -91,21 +91,6 @@ pub struct MftStandardInformation<'a> {
     slice_data : &'a[u8]
 }
 
-fn filetime_from_slice(slice_data : &[u8], offset : usize) -> FILETIME {
-    FILETIME { 
-        dwLowDateTime : LittleEndian::read_u32(&slice_data[offset..offset+4]), 
-        dwHighDateTime : LittleEndian::read_u32(&slice_data[offset+4..offset+8])
-    }
-}
-
-fn uint_from_slice<T : TryFrom<u64> + Default>(slice_data : &[u8], offset : usize) -> T {
-    LittleEndian::read_uint(&slice_data[offset..offset+size_of::<T>()], size_of::<T>()).try_into().unwrap_or_default()
-}
-
-fn int_from_slice<T : TryFrom<i64> + Default>(slice_data : &[u8], offset : usize) -> T {
-    LittleEndian::read_int(&slice_data[offset..offset+size_of::<T>()], size_of::<T>()).try_into().unwrap_or_default()
-}
-
 #[allow(dead_code)]
 impl<'a> MftStandardInformation<'a> {
     // == STANDARD_INFORMATION offsets
@@ -281,14 +266,14 @@ impl<'a> MftNonResidentFileData<'a> {
         )
     }
 
-    pub fn get_lowest_vcn(&self) -> u64 { uint_from_slice(&self.slice_data, MftNonResidentFileData::NRFD_LOWEST_VCN_OFFSET) }
-    pub fn get_highest_vcn(&self) -> u64 { uint_from_slice(&self.slice_data, MftNonResidentFileData::NRFD_HIGHEST_VCN_OFFSET) }
+    pub fn get_lowest_vcn(&self) -> u64 { MftNonResidentFileData::NRFD_LOWEST_VCN.read(self.slice_data) }
+    pub fn get_highest_vcn(&self) -> u64 { MftNonResidentFileData::NRFD_HIGHEST_VCN.read(self.slice_data) }
 
-    pub fn get_mapping_pairs_offset(&self) -> u16 { uint_from_slice(&self.slice_data, MftNonResidentFileData::NRFD_MAPPING_PAIRS_OFFSET_OFFSET) }
+    pub fn get_mapping_pairs_offset(&self) -> u16 { MftNonResidentFileData::NRFD_MAPPING_PAIRS_OFFSET.read(self.slice_data) }
 
-    pub fn get_allocated_length(&self) -> u64 { uint_from_slice(&self.slice_data, MftNonResidentFileData::NRFD_ALLOCATED_LENGTH_OFFSET) }
-    pub fn get_file_size(&self) -> u64 { uint_from_slice(&self.slice_data, MftNonResidentFileData::NRFD_FILE_SIZE_OFFSET) }
-    pub fn get_valid_data_length(&self) -> u64 { uint_from_slice(&self.slice_data, MftNonResidentFileData::NRFD_VALID_DATA_LENGTH_OFFSET) }
+    pub fn get_allocated_length(&self) -> u64 { MftNonResidentFileData::NRFD_ALLOCATED_LENGTH.read(self.slice_data) }
+    pub fn get_file_size(&self) -> u64 { MftNonResidentFileData::NRFD_FILE_SIZE.read(self.slice_data) }
+    pub fn get_valid_data_length(&self) -> u64 { MftNonResidentFileData::NRFD_VALID_DATA_LENGTH.read(self.slice_data) }
 
     pub fn get_direct_file_reader(&self, bytes_per_cluster : usize) -> Result<NtfsFileReader, String> {
         let mut run_offset = self.get_mapping_pairs_offset() as usize - ARH_NONRES_START_OFFSET;
