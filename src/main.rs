@@ -9,7 +9,7 @@ use std::ops::Range;
 use ntfs_mft::direct_volume_reader;
 use ntfs_mft::common::{MFT_RECORD_SIZE, FORM_CODE_NONRESIDENT};
 use ntfs_mft::mft_types::{FileType as MftFileType, FileUsageStatus, MftStandardInformation, MftNonResidentFileData };
-use ntfs_mft::mft_parser::{MftRecord, enumerate_mft_records, MftRecordsChunkBuffer, read_single_mft_record};
+use ntfs_mft::mft_parser::{MftRecord, MftRecordsChunkBuffer};
 
 use clap::{Parser, Subcommand};
 use ntfs_mft::mft_types::MftFileNameInfo;
@@ -152,10 +152,6 @@ impl MftInfo {
     }
 
     fn add_item(&mut self, mut item : Item) {
-        if item.parent_id == 2147 {
-            println!("TR");
-        }
-
         // Check for children and add their info if we have them        
         if item.is_directory {
             if let Some(new_children) = self.unparented_items.remove(&item.id) {
@@ -269,13 +265,13 @@ fn info(target : &String) -> Result<(), String> {
 
     for record_index in (0..mft_reader.get_max_number_of_records()).step_by(buffer_size_in_records) {
         
-        let _records_read = mft_reader.read_records_into_buffer(record_index as i64, buffer_size_in_records, &mut buffer[..])?;
+        let records_read = mft_reader.read_records_into_buffer(record_index as i64, buffer_size_in_records, &mut buffer[..])?;
 
-        let record_buffer = MftRecordsChunkBuffer::new(&mut buffer[..], record_index as u64);
+        let mut record_buffer = MftRecordsChunkBuffer::new(&mut buffer[..], record_index as u64, records_read);
 
         for mft_record in record_buffer.iter() {
             match mft_record {
-                Ok(Some(record)) => {
+                Ok(Some(record)) => {                    
                     if let Some(item) = Item::new(&record) {
                         mft_info.add_item(item);
                     }
@@ -322,10 +318,12 @@ fn display_record(target : &String, record_id : u64) -> Result<(), String> {
     let records_read = mft_reader.read_records_into_buffer(record_id as i64, 1, &mut buffer[..])?;
 
     // TODO: Let this handle "None" properly
-    let record = read_single_mft_record(&buffer, record_id)?.unwrap();
+    let record = MftRecord::new(&mut buffer, record_id)?.unwrap();
 
     println!("Record: #{}", record_id);
     println!("Entry type: {:?}  Usage status: {:?}", record.file_type, record.usage_status);
+    println!("Fixup okay: {}  Expected: {:#04x}  Replacements: {:#04x} @ offset 0x1FE, {:#04x} @ offset 0x3FE", record.fixup_okay, record.fixup_expected_value, record.fixup_replacement1, record.fixup_replacement2);
+
 
     println!("Attributes: ");
     // Iterate through the attributes and display info about them

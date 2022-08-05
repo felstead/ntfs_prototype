@@ -271,7 +271,7 @@ impl DirectVolumeMftReader {
             return Err(format!("Read invalid number of bytes for MFT record, expected {}, got {}", MFT_RECORD_SIZE, bytes_read));
         }
 
-        if let Some(mft_record) = read_single_mft_record(&mft_record_buffer, 0)? {
+        if let Some(mft_record) = MftRecord::new(&mut mft_record_buffer, 0)? {
             if let (Some(mft_file_name), Some(MftFileDataInfo::NonResident(mft_file_data))) = (mft_record.get_file_name_info(), mft_record.get_file_data_info()) {
                 if mft_file_name.get_file_name() != "$MFT" {
                     return Err(format!("MFT file_name was not $MFT, got '{}' instead!", mft_file_name.get_file_name()))
