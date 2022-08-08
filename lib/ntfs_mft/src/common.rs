@@ -37,6 +37,6 @@ pub const ARH_NONRES_VALID_DATA_LENGTH_OFFSET : usize = 56;
 
 // From https://docs.microsoft.com/en-us/windows/win32/devnotes/attribute-record-header
 pub const ATTR_STANDARD_INFORMATION : u32 = 0x10;
-pub const _ATTR_ATTRIBUTE_LIST : u32 = 0x20;
+pub const ATTR_ATTRIBUTE_LIST : u32 = 0x20;
 pub const ATTR_FILE_NAME : u32 = 0x30;
 pub const ATTR_DATA : u32 = 0x80;

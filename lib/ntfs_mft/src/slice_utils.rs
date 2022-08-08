@@ -5,7 +5,7 @@ use std::mem::size_of;
 use std::ops::Range;
 use windows_sys::Win32::Foundation::FILETIME;
 
-pub struct AttributeDataField<'a, T : SliceReadable<'a, T>> {
+pub struct MftDataField<'a, T : SliceReadable<'a, T>> {
     name : &'static str,
     offset : usize,
     dynamic_size : Option<fn(&'a [u8]) -> usize>,
@@ -17,8 +17,11 @@ pub struct AttributeDisplayInfo {
     pub range : Range<usize>
 }
 
-impl<'a, T : SliceReadable<'a, T>> AttributeDataField<'a, T> {
+impl<'a, T : SliceReadable<'a, T>> MftDataField<'a, T> {
     pub fn read(&self, slice : &'a [u8]) -> T {
+        if self.get_size(slice) + self.offset > slice.len() {
+            panic!("Tried to read outside of slice range: {} from slice of size {}", self.get_size(slice) + self.offset, slice.len());
+        }
         T::read(slice, self.offset, self.get_size(slice))
     }
 
@@ -42,11 +45,11 @@ impl<'a, T : SliceReadable<'a, T>> AttributeDataField<'a, T> {
     }
 
     pub const fn new(name : &'static str, offset : usize) -> Self {
-        AttributeDataField { name, offset, phantom: PhantomData, dynamic_size: None }
+        MftDataField { name, offset, phantom: PhantomData, dynamic_size: None }
     }
 
     pub const fn new_dynamic(name : &'static str, offset : usize, size_fn : fn(&'a [u8]) -> usize) -> Self {
-        AttributeDataField { name, offset, phantom: PhantomData, dynamic_size: Some(size_fn) }
+        MftDataField { name, offset, phantom: PhantomData, dynamic_size: Some(size_fn) }
     }
 }
 
@@ -77,6 +80,13 @@ impl<'a> SliceReadable<'a, &'a [u8]> for &'a [u8] {
     }
 }
 
+impl<'a> SliceReadable<'a, &'a [u16]> for &'a [u16] {
+    fn read(slice : &'a [u8], offset : usize, size : usize) -> &'a [u16] {
+        // Technically could fail on bad alignment, but that should never happen in our cases
+        unsafe { std::slice::from_raw_parts(slice[offset..offset+size].as_ptr() as *const u16, size / 2) }
+    }
+}
+
 // FILETIME
 impl<'a> SliceReadable<'a, FILETIME> for FILETIME {
     fn read(slice : &[u8], offset : usize, _size : usize) -> FILETIME { 
@@ -88,7 +98,14 @@ impl<'a> SliceReadable<'a, FILETIME> for FILETIME {
 }
 
 // Special shenanigans for our u48
+#[allow(non_camel_case_types)]
 pub struct u48 ( [u8 ; 6] );
+
+impl u48 {
+    pub fn is_zero(&self) -> bool {
+        return self.0 == [0u8;6]
+    }
+}
 
 impl From<&[u8]> for u48 {
     fn from(slice: &[u8]) -> Self {

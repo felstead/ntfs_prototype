@@ -1,6 +1,7 @@
 use byteorder::*;
 use crate::common::*;
 use crate::mft_types::*;
+use crate::slice_utils::*;
 
 #[derive(Default)]
 pub struct MftRecord<'a> {
@@ -13,7 +14,7 @@ pub struct MftRecord<'a> {
     pub fixup_replacement2 : u16,
 
     full_record_slice : &'a [u8],
-    all_attributes : [Option<MftAttributeBuffer<'a>>; 16],
+    all_attributes : [Option<MftAttribute<'a>>; 16],
     attribute_count : usize,
 
     // Special lookups - TODO: benchmark with and without these
@@ -27,6 +28,13 @@ pub struct MftRecord<'a> {
 
 impl<'a> MftRecord<'a> {
 
+    const MR_SIGNATURE : MftDataField<'a, u32> = MftDataField::<u32>::new("Signature", 0x00);
+    const MR_FIXUP_ARRAY_OFFSET : MftDataField<'a, u16> = MftDataField::<u16>::new("FixupArrayOffset", 0x04);
+    const MR_FIXUP_ARRAY_SIZE : MftDataField<'a, u16> = MftDataField::<u16>::new("FixupArraySize", 0x06);
+    const MR_BASE_RECORD_ADDRESS : MftDataField<'a, u48> = MftDataField::<u48>::new("BaseRecordAddress", 0x20);
+    const MR_BASE_RECORD_SEQ_ID : MftDataField<'a, u16> = MftDataField::<u16>::new("BaseRecordSequenceId", 0x26);
+    const MR_RECORD_ID : MftDataField<'a, u32> = MftDataField::<u32>::new("MftRecordId", 0x2C);
+
     pub fn new(record : &'a mut [u8], record_id : u64) -> Result<Option<Self>, String> {
         // Now we have a buffer, we can operate on it safely
         // This can also be done unsafely by plonking structs on top of it, but the whole point of Rust is to be safe, so ¯\_(ツ)_/¯
@@ -37,9 +45,14 @@ impl<'a> MftRecord<'a> {
             return Err(format!("Received buffer of invalid size, expected {}, got {}", MFT_RECORD_SIZE, record.len()))
         }
 
-        let signature : u32 = LittleEndian::read_u32(&record[0..4]);
+        let signature : u32 = MftRecord::MR_SIGNATURE.read(&record);
 
         if signature == EXPECTED_SIGNATURE {
+            let internal_record_id = MftRecord::MR_RECORD_ID.read(record);
+            if internal_record_id != record_id as u32 {
+                panic!("Mft record ID doesn't match passed in record ID");
+            }
+
             // Perform the fixup
             let mut fixup_okay = false;
             let fixup_array_offset = LittleEndian::read_u16(&record[4..6]);
@@ -59,7 +72,6 @@ impl<'a> MftRecord<'a> {
             } else {
                 println!("BAD FIXUP #{} - expected {}, got {} and {}", record_id, expected_value, LittleEndian::read_u16(&record[510..512]), LittleEndian::read_u16(&record[1022..1024]));
             }
-
 
             //println!("Record {:#x}: Signature was good", record_id);
 
@@ -100,17 +112,14 @@ impl<'a> MftRecord<'a> {
                 if attribute_type_code == 0xffffffff {
                     break;
                 }
-                // While the record length is a u32, it seems like only the bottom 16 bits are the record length.
-                // Am I messing this up with an ATTRIBUTE_LIST_ENTRY?
-                let record_length = LittleEndian::read_u16(&record[attribute_offset+ARH_RECORD_LENGTH_OFFSET..attribute_offset+ARH_RECORD_LENGTH_OFFSET+2]) as usize;
-    //            println!("Reading attribute at offset {:#x}-{:#x}, type code {:#x}, record length: {}", attribute_offset, attribute_offset + record_length, attribute_type_code, record_length);
+
+                let record_length = LittleEndian::read_u32(&record[attribute_offset+ARH_RECORD_LENGTH_OFFSET..attribute_offset+ARH_RECORD_LENGTH_OFFSET+4]) as usize;
 
                 if record_length > 0 && record_length <= MFT_RECORD_SIZE {
 
                     let attribute = &record[attribute_offset..attribute_offset+record_length];
 
-                    mft_record.add_attribute(attribute)?;
-
+                    mft_record.add_base_attribute(attribute)?;
                 } else {
                     println!("Record {}: Read invalid attribute record size of {} for attribute type {:#x} at offset {:#x}, skipping the rest of the record", record_id, record_length, attribute_type_code, attribute_offset+ARH_RECORD_LENGTH_OFFSET);
                     break;
@@ -128,7 +137,7 @@ impl<'a> MftRecord<'a> {
         }
     }
 
-    pub fn get_all_attributes(&self) -> &[Option<MftAttributeBuffer<'a>>; 16] {
+    pub fn get_all_attributes(&self) -> &[Option<MftAttribute<'a>>; 16] {
         &self.all_attributes
     }
 
@@ -136,10 +145,28 @@ impl<'a> MftRecord<'a> {
         self.attribute_count
     }
 
-    pub fn add_attribute(&mut self, slice : &'a [u8]) -> Result<(), String> {
+    pub fn add_base_attribute(&mut self, slice : &'a [u8]) -> Result<(), String> {
         if self.attribute_count < self.all_attributes.len() {
             let attr = MftAttributeBuffer::new(slice)?;
-            self.all_attributes[self.attribute_count] = Some(attr);
+
+            // Special case here - we need to populate the extension attributes if we have an ATTRIBUTE_LIST record
+            if attr.get_attribute_type() == ATTR_ATTRIBUTE_LIST {
+                if attr.get_form_code() == FORM_CODE_NONRESIDENT {
+                    println!("Can't parse non-resident attribute list in record #{}", self.id);
+                } else {
+                    let attribute_list = MftAttributeList::new(attr.get_data_slice());
+
+                    for attr in attribute_list.iter() {
+                        if attr.get_record_id() != self.id {
+                            // This is an extension record
+                            self.add_extension_attribute(&attr)?;
+                        }
+                    }    
+                }
+            }
+
+            // Take ownership of the attribute
+            self.all_attributes[self.attribute_count] = Some(MftAttribute::Base(attr));
             self.attribute_count += 1;
 
             return Ok(())
@@ -148,8 +175,28 @@ impl<'a> MftRecord<'a> {
         panic!("Too many attributes!!");
     }
 
+    pub fn add_extension_attribute(&mut self, extension_record : &MftAttributeListEntry) -> Result<(), String> {
+        if self.attribute_count < self.all_attributes.len() {
+            let ext_attr =  MftAttributeReference::new(extension_record);
+            self.all_attributes[self.attribute_count] = Some(MftAttribute::Extension(ext_attr));
+            self.attribute_count += 1;
+
+            return Ok(())
+        }
+
+        panic!("Too many attributes!!");
+    }
+
+    pub fn is_base_record(&self) -> bool {
+        self.get_base_record_id() != 0
+    }
+
+    pub fn get_base_record_id(&self) -> u64 {
+        MftRecord::MR_BASE_RECORD_ADDRESS.read(self.full_record_slice).into()
+    }
+
     pub fn get_standard_information(&'a self) -> Option<MftStandardInformation<'a>> {
-        if let Some(&buffer) = self.get_first_attribute(ATTR_STANDARD_INFORMATION).as_ref() {
+        if let Some(MftAttribute::Base(buffer)) = self.get_first_attribute(ATTR_STANDARD_INFORMATION).as_ref() {
             Some(MftStandardInformation::new(&buffer.get_data_slice()))
         } else {
             None
@@ -158,13 +205,21 @@ impl<'a> MftRecord<'a> {
 
     pub fn get_file_name_info(&'a self) -> Option<MftFileNameInfo<'a>> {
         self.iter()
-            .filter(|a| a.get_attribute_type() == ATTR_FILE_NAME)
-            .map(|a| MftFileNameInfo::new(a.get_data_slice()))
+            .filter_map(|a| 
+                if let MftAttribute::Base(attr) = a {
+                    if attr.get_attribute_type() == ATTR_FILE_NAME {
+                        Some(MftFileNameInfo::new(attr.get_data_slice()))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                })
             .find(|a| a.get_namespace() != 2) // 2 is DOS
     }
 
     pub fn get_file_data_info(&'a self) -> Option<MftFileDataInfo<'a>> {
-        if let Some(&buffer) = self.get_first_attribute(ATTR_DATA).as_ref() {
+        if let Some(MftAttribute::Base(buffer)) = self.get_first_attribute(ATTR_DATA).as_ref() {
             if buffer.get_form_code() == FORM_CODE_NONRESIDENT {
                 Some(MftFileDataInfo::NonResident(MftNonResidentFileData::new(buffer.get_data_slice())))
             } else {
@@ -175,8 +230,13 @@ impl<'a> MftRecord<'a> {
         }
     }
 
-    pub fn get_first_attribute(&'a self, attr_type : u32) -> Option<&MftAttributeBuffer<'a>> {
-        self.iter().find(|a| a.get_attribute_type() == attr_type )
+    pub fn get_first_attribute(&'a self, attr_type : u32) -> Option<&MftAttribute<'a>> {
+        self.iter().find(|a| 
+            match *a {
+                MftAttribute::Base(attr) => attr.get_attribute_type() == attr_type,
+                MftAttribute::Extension(attr) => attr.get_attribute_type() == attr_type
+            }
+        )
     }
 
     pub fn iter(&'a self) -> MftRecordAttributeIterator<'a> {
@@ -190,9 +250,9 @@ pub struct MftRecordAttributeIterator<'a> {
 }
 
 impl<'a> Iterator for MftRecordAttributeIterator<'a> {
-    type Item = &'a MftAttributeBuffer<'a>;
+    type Item = &'a MftAttribute<'a>;
     
-    fn next(&mut self) -> Option<&'a MftAttributeBuffer<'a>> {
+    fn next(&mut self) -> Option<Self::Item> {
         if self.current_record_offset < self.parent.get_attribute_count() {
             self.current_record_offset += 1;
             Some(&self.parent.all_attributes[self.current_record_offset - 1].as_ref().unwrap())

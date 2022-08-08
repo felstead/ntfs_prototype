@@ -1,11 +1,51 @@
 use windows_sys::Win32::Foundation::FILETIME;
 use byteorder::*;
-use std::mem::size_of;
-use std::ops::Range;
 
 use crate::common::*;
 use crate::ntfs_file_reader::NtfsFileReader;
 use crate::slice_utils::*;
+
+pub enum MftAttribute<'a> {
+    Base(MftAttributeBuffer<'a>),
+    Extension(MftAttributeReference)
+}
+
+impl<'a> MftAttribute<'a> {
+    pub fn get_attribute_type(&self) -> u32 {
+        match self {
+            Self::Base(attr) => {
+                attr.get_attribute_type()
+            },
+            Self::Extension(attr) => {
+                attr.get_attribute_type()
+            }
+        }
+    }
+}
+
+pub struct MftAttributeReference {
+    attribute_type : u32,
+    record_id : u64,
+    record_seq_id : u16
+}
+
+impl MftAttributeReference { 
+    pub fn new(list_entry : &MftAttributeListEntry) -> Self {
+        MftAttributeReference {
+            attribute_type: list_entry.get_attribute_type(),
+            record_id: list_entry.get_record_id(),
+            record_seq_id: list_entry.get_record_seq_id()
+        }
+    }
+
+    pub fn get_attribute_type(&self) -> u32 {
+        self.attribute_type
+    }
+
+    pub fn get_extension_record_id(&self) -> u64 {
+        self.record_id
+    }
+}
 
 pub struct MftAttributeBuffer<'a> {
     attribute_type : u32,
@@ -94,18 +134,18 @@ pub struct MftStandardInformation<'a> {
 #[allow(dead_code)]
 impl<'a> MftStandardInformation<'a> {
     // == STANDARD_INFORMATION offsets
-    const SI_CREATE_TIMESTAMP : AttributeDataField<'a, FILETIME> = AttributeDataField::<FILETIME>::new( "CreatedTimestamp", 0x00);
-    const SI_ALTERED_TIMESTAMP : AttributeDataField<'a, FILETIME> = AttributeDataField::<FILETIME>::new( "AlteredTimestamp", 0x08);
-    const SI_MFT_CHANGED_TIMESTAMP : AttributeDataField<'a, FILETIME> = AttributeDataField::<FILETIME>::new( "ChangedTimestamp", 0x10);
-    const SI_READ_TIMESTAMP : AttributeDataField<'a, FILETIME> = AttributeDataField::<FILETIME>::new( "ReadTimestamp", 0x18);
-    const SI_PERMISSIONS : AttributeDataField<'a, u32> = AttributeDataField::<u32>::new( "Permissions", 0x20);
-    const SI_MAX_VERSIONS : AttributeDataField<'a, u32> = AttributeDataField::<u32>::new( "MaxVersions", 0x24);
-    const SI_VERSION_NUMBER : AttributeDataField<'a, u32> = AttributeDataField::<u32>::new( "VersionNumber", 0x28);
-    const SI_CLASS_ID : AttributeDataField<'a, u32> = AttributeDataField::<u32>::new( "ClassId", 0x2C);
-    const SI_OWNER_ID : AttributeDataField<'a, u32> = AttributeDataField::<u32>::new( "OwnerId", 0x30);
-    const SI_SECURITY_ID : AttributeDataField<'a, u32> = AttributeDataField::<u32>::new( "SecurityId", 0x34);
-    const SI_QUOTA_CHARGED : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new( "QuotaCharged", 0x38);
-    const SI_USN : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new( "Usn", 0x40);
+    const SI_CREATE_TIMESTAMP : MftDataField<'a, FILETIME> = MftDataField::<FILETIME>::new( "CreatedTimestamp", 0x00);
+    const SI_ALTERED_TIMESTAMP : MftDataField<'a, FILETIME> = MftDataField::<FILETIME>::new( "AlteredTimestamp", 0x08);
+    const SI_MFT_CHANGED_TIMESTAMP : MftDataField<'a, FILETIME> = MftDataField::<FILETIME>::new( "ChangedTimestamp", 0x10);
+    const SI_READ_TIMESTAMP : MftDataField<'a, FILETIME> = MftDataField::<FILETIME>::new( "ReadTimestamp", 0x18);
+    const SI_PERMISSIONS : MftDataField<'a, u32> = MftDataField::<u32>::new( "Permissions", 0x20);
+    const SI_MAX_VERSIONS : MftDataField<'a, u32> = MftDataField::<u32>::new( "MaxVersions", 0x24);
+    const SI_VERSION_NUMBER : MftDataField<'a, u32> = MftDataField::<u32>::new( "VersionNumber", 0x28);
+    const SI_CLASS_ID : MftDataField<'a, u32> = MftDataField::<u32>::new( "ClassId", 0x2C);
+    const SI_OWNER_ID : MftDataField<'a, u32> = MftDataField::<u32>::new( "OwnerId", 0x30);
+    const SI_SECURITY_ID : MftDataField<'a, u32> = MftDataField::<u32>::new( "SecurityId", 0x34);
+    const SI_QUOTA_CHARGED : MftDataField<'a, u64> = MftDataField::<u64>::new( "QuotaCharged", 0x38);
+    const SI_USN : MftDataField<'a, u64> = MftDataField::<u64>::new( "Usn", 0x40);
 
     pub fn new(slice_data: &'a[u8]) -> Self {
         Self { slice_data }
@@ -113,27 +153,27 @@ impl<'a> MftStandardInformation<'a> {
 
     pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
         vec!(
-            MftStandardInformation::SI_CREATE_TIMESTAMP.get_display_info(self.slice_data),
-            MftStandardInformation::SI_ALTERED_TIMESTAMP.get_display_info(self.slice_data),
-            MftStandardInformation::SI_MFT_CHANGED_TIMESTAMP.get_display_info(self.slice_data),
-            MftStandardInformation::SI_READ_TIMESTAMP.get_display_info(self.slice_data),
-            MftStandardInformation::SI_PERMISSIONS.get_display_info(self.slice_data),
-            MftStandardInformation::SI_MAX_VERSIONS.get_display_info(self.slice_data),
-            MftStandardInformation::SI_VERSION_NUMBER.get_display_info(self.slice_data),
-            MftStandardInformation::SI_CLASS_ID.get_display_info(self.slice_data),
-            MftStandardInformation::SI_OWNER_ID.get_display_info(self.slice_data),
-            MftStandardInformation::SI_SECURITY_ID.get_display_info(self.slice_data),
-            MftStandardInformation::SI_QUOTA_CHARGED.get_display_info(self.slice_data),
-            MftStandardInformation::SI_USN.get_display_info(self.slice_data),
+            Self::SI_CREATE_TIMESTAMP.get_display_info(self.slice_data),
+            Self::SI_ALTERED_TIMESTAMP.get_display_info(self.slice_data),
+            Self::SI_MFT_CHANGED_TIMESTAMP.get_display_info(self.slice_data),
+            Self::SI_READ_TIMESTAMP.get_display_info(self.slice_data),
+            Self::SI_PERMISSIONS.get_display_info(self.slice_data),
+            Self::SI_MAX_VERSIONS.get_display_info(self.slice_data),
+            Self::SI_VERSION_NUMBER.get_display_info(self.slice_data),
+            Self::SI_CLASS_ID.get_display_info(self.slice_data),
+            Self::SI_OWNER_ID.get_display_info(self.slice_data),
+            Self::SI_SECURITY_ID.get_display_info(self.slice_data),
+            Self::SI_QUOTA_CHARGED.get_display_info(self.slice_data),
+            Self::SI_USN.get_display_info(self.slice_data),
         )
     }
 
-    pub fn get_create_timestamp(&self) -> FILETIME { MftStandardInformation::SI_CREATE_TIMESTAMP.read(self.slice_data) }
-    pub fn get_altered_timestamp(&self) -> FILETIME { MftStandardInformation::SI_ALTERED_TIMESTAMP.read(self.slice_data) }
-    pub fn get_mft_changed_timestamp(&self) -> FILETIME { MftStandardInformation::SI_MFT_CHANGED_TIMESTAMP.read(self.slice_data) }
-    pub fn get_read_timestamp(&self) -> FILETIME { MftStandardInformation::SI_READ_TIMESTAMP.read(self.slice_data) }
+    pub fn get_create_timestamp(&self) -> FILETIME { Self::SI_CREATE_TIMESTAMP.read(self.slice_data) }
+    pub fn get_altered_timestamp(&self) -> FILETIME { Self::SI_ALTERED_TIMESTAMP.read(self.slice_data) }
+    pub fn get_mft_changed_timestamp(&self) -> FILETIME { Self::SI_MFT_CHANGED_TIMESTAMP.read(self.slice_data) }
+    pub fn get_read_timestamp(&self) -> FILETIME { Self::SI_READ_TIMESTAMP.read(self.slice_data) }
 
-    pub fn get_permissions(&self) -> u32 { MftStandardInformation::SI_PERMISSIONS.read(self.slice_data) }
+    pub fn get_permissions(&self) -> u32 { Self::SI_PERMISSIONS.read(self.slice_data) }
 }
 
 
@@ -157,14 +197,14 @@ impl<'a> MftFileNameInfo<'a> {
     pub const FN_FILE_NAME_NAMESPACE_OFFSET : usize = 65;
     pub const FN_FILE_NAME_DATA_OFFSET : usize = 66;
 
-    const FN_PARENT_DIR_REFERENCE : AttributeDataField<'a, u48> = AttributeDataField::<u48>::new("ParentDataDirId", 0x0);
-    const FN_ALLOCATED_SIZE_OF_FILE : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("AllocatedSizeOfFile", 0x28);
-    const FN_REAL_SIZE_OF_FILE : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("RealSizeOfFile", 0x30);
+    const FN_PARENT_DIR_REFERENCE : MftDataField<'a, u48> = MftDataField::<u48>::new("ParentDataDirId", 0x0);
+    const FN_ALLOCATED_SIZE_OF_FILE : MftDataField<'a, u64> = MftDataField::<u64>::new("AllocatedSizeOfFile", 0x28);
+    const FN_REAL_SIZE_OF_FILE : MftDataField<'a, u64> = MftDataField::<u64>::new("RealSizeOfFile", 0x30);
 
-    const FN_FILE_NAME_LENGTH : AttributeDataField<'a, u8> = AttributeDataField::<u8>::new("FileNameLengthInChars", 0x40);
-    const FN_FILE_NAME_NAMESPACE : AttributeDataField<'a, u8> = AttributeDataField::<u8>::new("Namespace", 0x41);
+    const FN_FILE_NAME_LENGTH : MftDataField<'a, u8> = MftDataField::<u8>::new("FileNameLengthInChars", 0x40);
+    const FN_FILE_NAME_NAMESPACE : MftDataField<'a, u8> = MftDataField::<u8>::new("Namespace", 0x41);
 
-    const FN_FILE_NAME : AttributeDataField<'a, &'a [u8]> = AttributeDataField::<&'a [u8]>::new_dynamic("FileNameData", 0x42, |slice| { MftFileNameInfo::FN_FILE_NAME_LENGTH.read(slice) as usize * 2 });
+    const FN_FILE_NAME : MftDataField<'a, &'a [u8]> = MftDataField::<&'a [u8]>::new_dynamic("FileNameData", 0x42, |slice| { MftFileNameInfo::FN_FILE_NAME_LENGTH.read(slice) as usize * 2 });
 
     pub fn new(slice_data: &'a[u8]) -> Self {
         Self { slice_data }
@@ -203,6 +243,75 @@ impl<'a> MftFileNameInfo<'a> {
     pub fn get_namespace(&self) -> u8 { MftFileNameInfo::FN_FILE_NAME_NAMESPACE.read(self.slice_data) }
 }
 
+pub struct MftAttributeList <'a> {
+    slice_data : &'a[u8]
+}
+
+impl<'a> MftAttributeList <'a> {
+    pub fn new(slice_data: &'a[u8]) -> Self {
+        Self { slice_data }
+    }
+
+    pub fn iter(&'a self) -> MftAttributeListIterator<'a> {
+        MftAttributeListIterator { parent: &self, current_attribute_offset: 0 }
+    }
+}
+
+pub struct MftAttributeListIterator<'a> {
+    parent : &'a MftAttributeList<'a>,
+    current_attribute_offset: usize
+}
+
+impl<'a> Iterator for MftAttributeListIterator<'a> {
+    type Item = MftAttributeListEntry<'a>;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        let slice = &self.parent.slice_data[self.current_attribute_offset..];
+
+        if let Some(result) = MftAttributeListEntry::new(slice) {
+            self.current_attribute_offset += result.slice_data.len();
+            Some(result)
+        } else {
+            None
+        }
+    }
+}
+
+pub struct MftAttributeListEntry <'a> {
+    slice_data : &'a[u8]
+}
+
+impl<'a> MftAttributeListEntry <'a> {
+    const ALE_ATTRIBUTE_TYPE_CODE : MftDataField<'a, u32> = MftDataField::<u32>::new("AttributeTypeCode", 0x00);
+    const ALE_RECORD_LENGTH : MftDataField<'a, u16> = MftDataField::<u16>::new("RecordLength", 0x04);
+    const ALE_SEGMENT_REFERENCE_RECORD_ID : MftDataField<'a, u48> = MftDataField::<u48>::new("ReferencedRecordId", 0x10);
+    const ALE_SEGMENT_REFERENCE_SEQUENCE_ID : MftDataField<'a, u16> = MftDataField::<u16>::new("ReferencedSeqId", 0x16);
+
+    pub fn new(attribute_list_slice : &'a [u8]) -> Option<MftAttributeListEntry<'a>> {
+        if attribute_list_slice.len() == 0 {
+            None
+        } else {
+            let record_length = Self::ALE_RECORD_LENGTH.read(attribute_list_slice) as usize;
+
+            Some(MftAttributeListEntry {
+                slice_data: &attribute_list_slice[0..record_length]
+            })
+        }
+    }
+
+    pub fn get_attribute_type(&self) -> u32 {
+        Self::ALE_ATTRIBUTE_TYPE_CODE.read(self.slice_data)
+    }
+
+    pub fn get_record_id(&self) -> u64 {
+        Self::ALE_SEGMENT_REFERENCE_RECORD_ID.read(self.slice_data).into()
+    }
+
+    pub fn get_record_seq_id(&self) -> u16 {
+        Self::ALE_SEGMENT_REFERENCE_SEQUENCE_ID.read(self.slice_data)
+    }
+}
+
 pub struct MftResidentFileData <'a> {
     slice_data : &'a[u8]
 }
@@ -211,7 +320,7 @@ pub struct MftResidentFileData <'a> {
 impl<'a> MftResidentFileData<'a> {
     const RFD_FILE_SIZE_OFFSET : usize = 0;
 
-    const RFD_FILE_SIZE : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("FileSize", 0x0);
+    const RFD_FILE_SIZE : MftDataField<'a, u64> = MftDataField::<u64>::new("FileSize", 0x0);
 
     pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
         vec!(
@@ -236,14 +345,14 @@ impl<'a> MftNonResidentFileData<'a> {
     pub const NRFD_VALID_DATA_LENGTH_OFFSET : usize = 40;
     pub const NRFD_TOTAL_ALLOCATED_OFFSET : usize = 48;
     
-    const NRFD_LOWEST_VCN : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("LowestVcn", 0x00);
-    const NRFD_HIGHEST_VCN : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("HighestVcn", 0x08);
-    const NRFD_MAPPING_PAIRS_OFFSET : AttributeDataField<'a, u16> = AttributeDataField::<u16>::new("MappingPairsOffset", 0x10);
-    const NRFD_ALLOCATED_LENGTH : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("AllocatedLength", 0x18);
-    const NRFD_FILE_SIZE : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("FileSize", 0x20);
-    const NRFD_VALID_DATA_LENGTH : AttributeDataField<'a, u64> = AttributeDataField::<u64>::new("ValidDataLength", 0x28);
+    const NRFD_LOWEST_VCN : MftDataField<'a, u64> = MftDataField::<u64>::new("LowestVcn", 0x00);
+    const NRFD_HIGHEST_VCN : MftDataField<'a, u64> = MftDataField::<u64>::new("HighestVcn", 0x08);
+    const NRFD_MAPPING_PAIRS_OFFSET : MftDataField<'a, u16> = MftDataField::<u16>::new("MappingPairsOffset", 0x10);
+    const NRFD_ALLOCATED_LENGTH : MftDataField<'a, u64> = MftDataField::<u64>::new("AllocatedLength", 0x18);
+    const NRFD_FILE_SIZE : MftDataField<'a, u64> = MftDataField::<u64>::new("FileSize", 0x20);
+    const NRFD_VALID_DATA_LENGTH : MftDataField<'a, u64> = MftDataField::<u64>::new("ValidDataLength", 0x28);
 
-    const NRFD_DATA_RUNS : AttributeDataField<'a, &'a [u8]> = AttributeDataField::<&'a [u8]>::new_dynamic("DataRuns", 0x30, |slice| { slice.len() - 0x30 });
+    const NRFD_DATA_RUNS : MftDataField<'a, &'a [u8]> = MftDataField::<&'a [u8]>::new_dynamic("DataRuns", 0x30, |slice| { slice.len() - 0x30 });
     // This field is only valid for compressed data apparently
         //  Totally allocated.  This field is only present for the first
         //  file record of a compressed stream.  It represents the sum of

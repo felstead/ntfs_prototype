@@ -8,7 +8,7 @@ use std::ops::Range;
 
 use ntfs_mft::direct_volume_reader;
 use ntfs_mft::common::{MFT_RECORD_SIZE, FORM_CODE_NONRESIDENT};
-use ntfs_mft::mft_types::{FileType as MftFileType, FileUsageStatus, MftStandardInformation, MftNonResidentFileData };
+use ntfs_mft::mft_types::{FileType as MftFileType, FileUsageStatus, MftStandardInformation, MftNonResidentFileData, MftAttribute };
 use ntfs_mft::mft_parser::{MftRecord, MftRecordsChunkBuffer};
 
 use clap::{Parser, Subcommand};
@@ -175,12 +175,12 @@ impl MftInfo {
 
             parent_record.add_child(&item, new_item_index, is_direct_parent);
 
+            parent_count += 1;
             if parent_id == parent_record.parent_id {
                 break;
             } else {
-                parent_count += 1;
                 parent_id = parent_record.parent_id;
-            }
+            }            
         }
 
         if parent_count == 0 && item.id != 5 {
@@ -304,6 +304,19 @@ fn info(target : &String) -> Result<(), String> {
         }
     }
 
+    for (parent_id, uplist) in mft_info.unparented_items.iter() {
+        if let Some(parent_item) = mft_info.get_item_by_record_id(*parent_id) {
+            println!("Parent index: #{} -> [{}] {}", parent_id, parent_item.id, parent_item.name);
+
+            for unparented in uplist {
+                let child_item = mft_info.get_item_by_index(*unparented as usize).unwrap();
+                println!(" - {} -> #{} {}", unparented, child_item.id, child_item.name);
+            }    
+        } else {
+            println!("NOT FOUND: #{}", *parent_id);
+        }
+    }
+
 
     Ok(())
 }
@@ -320,7 +333,7 @@ fn display_record(target : &String, record_id : u64) -> Result<(), String> {
     // TODO: Let this handle "None" properly
     let record = MftRecord::new(&mut buffer, record_id)?.unwrap();
 
-    println!("Record: #{}", record_id);
+    println!("Record: #{}       Base record ID: #{}", record_id, record.get_base_record_id());
     println!("Entry type: {:?}  Usage status: {:?}", record.file_type, record.usage_status);
     println!("Fixup okay: {}  Expected: {:#04x}  Replacements: {:#04x} @ offset 0x1FE, {:#04x} @ offset 0x3FE", record.fixup_okay, record.fixup_expected_value, record.fixup_replacement1, record.fixup_replacement2);
 
@@ -329,6 +342,7 @@ fn display_record(target : &String, record_id : u64) -> Result<(), String> {
     // Iterate through the attributes and display info about them
 
     for attr in record.iter() {
+        
         let attr_type = match attr.get_attribute_type() {
             0x10 => "$STANDARD_INFORMATION",
             0x20 => "$ATTRIBUTE_LIST",
@@ -349,45 +363,55 @@ fn display_record(target : &String, record_id : u64) -> Result<(), String> {
             _ => "UNKNOWN"
         };
 
-        println!("== {:#x} ({}) of length {} (data is {})", 
-            attr.get_attribute_type(),
-            attr_type,
-            attr.get_data_slice().len(),
-            if attr.get_form_code() == FORM_CODE_NONRESIDENT { "non-resident" } else { "resident" });
-
-        println!();
-
-        let mut ranges : Vec::<Range<usize>> = vec!();
-        let mut field_display_info : Vec<AttributeDisplayInfo> = vec!();
-        if attr.get_attribute_type() == 0x30 {
-            let filename = MftFileNameInfo::new(attr.get_data_slice());
-            field_display_info = filename.get_field_display_info();
-        } else if attr.get_attribute_type() == 0x10 {
-            let stdinfo = MftStandardInformation::new(attr.get_data_slice());
-            field_display_info = stdinfo.get_field_display_info();
-        } else if attr.get_attribute_type() == 0x80 && attr.get_form_code() == FORM_CODE_NONRESIDENT {
-            let data = MftNonResidentFileData::new(attr.get_data_slice());
-            field_display_info = data.get_field_display_info();
-        }
-
-        if field_display_info.len() > 0 {
-            for (index, f) in field_display_info.iter().enumerate() {
-                let range_string = format!("0x{:02x}-0x{:02x}", f.range.start, f.range.end - 1).on_color(PALETTE[index]).color(Color::Black);
-                if index % 2 == 0 {
-                    print!("{:>25} : {}", f.name.bold(), range_string);
-                } else {
-                    println!("{:>25} : {}", f.name.bold(), range_string);
-                }    
-                ranges.push(f.range.start..f.range.end); // Ugh
+        match attr {
+            MftAttribute::Base(attr) => {
+                println!("== {:#x} ({}) of length {} (data is {})", 
+                attr.get_attribute_type(),
+                attr_type,
+                attr.get_data_slice().len(),
+                if attr.get_form_code() == FORM_CODE_NONRESIDENT { "non-resident" } else { "resident" });
+    
+                println!();
+        
+                let mut ranges : Vec::<Range<usize>> = vec!();
+                let mut field_display_info : Vec<AttributeDisplayInfo> = vec!();
+                if attr.get_attribute_type() == 0x30 {
+                    let filename = MftFileNameInfo::new(attr.get_data_slice());
+                    field_display_info = filename.get_field_display_info();
+                } else if attr.get_attribute_type() == 0x10 {
+                    let stdinfo = MftStandardInformation::new(attr.get_data_slice());
+                    field_display_info = stdinfo.get_field_display_info();
+                } else if attr.get_attribute_type() == 0x80 && attr.get_form_code() == FORM_CODE_NONRESIDENT {
+                    let data = MftNonResidentFileData::new(attr.get_data_slice());
+                    field_display_info = data.get_field_display_info();
+                }
+        
+                if field_display_info.len() > 0 {
+                    for (index, f) in field_display_info.iter().enumerate() {
+                        let range_string = format!("0x{:02x}-0x{:02x}", f.range.start, f.range.end - 1).on_color(PALETTE[index]).color(Color::Black);
+                        if index % 2 == 0 {
+                            print!("{:>25} : {}", f.name.bold(), range_string);
+                        } else {
+                            println!("{:>25} : {}", f.name.bold(), range_string);
+                        }    
+                        ranges.push(f.range.start..f.range.end); // Ugh
+                    }
+        
+                    if field_display_info.len() % 2 == 1 { 
+                        println!(); 
+                    }
+                }
+        
+                println!();
+                hexdump(attr.get_data_slice(), 16, 4, &ranges);    
+            },
+            MftAttribute::Extension(attr_ref) => {
+                println!("== {:#x} ({}), present in extension record: #{}", 
+                    attr_ref.get_attribute_type(),
+                    attr_type,
+                    attr_ref.get_extension_record_id());
             }
-
-            if field_display_info.len() % 2 == 1 { 
-                println!(); 
-            }
         }
-
-        println!();
-        hexdump(attr.get_data_slice(), 16, 4, &ranges);
 
         println!();
     }
