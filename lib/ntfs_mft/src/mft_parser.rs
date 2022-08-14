@@ -16,14 +16,6 @@ pub struct MftRecord<'a> {
     full_record_slice : &'a [u8],
     all_attributes : [Option<MftAttribute<'a>>; 16],
     attribute_count : usize,
-
-    // Special lookups - TODO: benchmark with and without these
-    /*
-    standard_information_index : Option<usize>,
-    file_name_info_index : Option<usize>,
-    short_file_name_info_index : Option<usize>,
-    */
-
 }
 
 impl<'a> MftRecord<'a> {
@@ -31,6 +23,7 @@ impl<'a> MftRecord<'a> {
     const MR_SIGNATURE : MftDataField<'a, u32> = MftDataField::<u32>::new("Signature", 0x00);
     const MR_FIXUP_ARRAY_OFFSET : MftDataField<'a, u16> = MftDataField::<u16>::new("FixupArrayOffset", 0x04);
     const MR_FIXUP_ARRAY_SIZE : MftDataField<'a, u16> = MftDataField::<u16>::new("FixupArraySize", 0x06);
+    const MR_HARD_LINK_COUNT : MftDataField<'a, u16> = MftDataField::<u16>::new("HardLinkCount", 0x12);
     const MR_BASE_RECORD_ADDRESS : MftDataField<'a, u48> = MftDataField::<u48>::new("BaseRecordAddress", 0x20);
     const MR_BASE_RECORD_SEQ_ID : MftDataField<'a, u16> = MftDataField::<u16>::new("BaseRecordSequenceId", 0x26);
     const MR_RECORD_ID : MftDataField<'a, u32> = MftDataField::<u32>::new("MftRecordId", 0x2C);
@@ -192,7 +185,11 @@ impl<'a> MftRecord<'a> {
     }
 
     pub fn get_base_record_id(&self) -> u64 {
-        MftRecord::MR_BASE_RECORD_ADDRESS.read(self.full_record_slice).into()
+        Self::MR_BASE_RECORD_ADDRESS.read(self.full_record_slice).into()
+    }
+
+    pub fn get_hard_link_count(&self) -> u16 {
+        Self::MR_HARD_LINK_COUNT.read(self.full_record_slice)
     }
 
     pub fn get_standard_information(&'a self) -> Option<MftStandardInformation<'a>> {
@@ -221,7 +218,7 @@ impl<'a> MftRecord<'a> {
     pub fn get_file_data_info(&'a self) -> Option<MftFileDataInfo<'a>> {
         if let Some(MftAttribute::Base(buffer)) = self.get_first_attribute(ATTR_DATA).as_ref() {
             if buffer.get_form_code() == FORM_CODE_NONRESIDENT {
-                Some(MftFileDataInfo::NonResident(MftNonResidentFileData::new(buffer.get_data_slice())))
+                Some(MftFileDataInfo::NonResident(MftNonResidentAttribute::new(buffer.get_data_slice())))
             } else {
                 None
             }

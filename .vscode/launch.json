@@ -38,7 +38,8 @@
                     "kind": "bin"
                 }
             },
-            "args": ["info", "c:\\temp\\mft.dat"],
+            //"args": ["info", "c:\\temp\\mft.dat"],
+            "args": ["display-record", "c:\\temp\\mft.dat", "45494"],
             "cwd": "${workspaceFolder}"
         },
         {

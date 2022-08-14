@@ -58,7 +58,7 @@ pub fn create_mft_reader(path_string : &str) -> Result<Box<dyn MftReader>, Strin
 pub trait MftReader {
     fn get_mft_size_bytes(&self) -> i64;
     fn get_max_number_of_records(&self) -> usize;
-    fn read_records_into_buffer(&mut self, first_record_id : i64, num_records : usize, buffer : &mut [u8]) -> Result<usize, String>;
+    fn read_records_into_buffer(&mut self, first_record_id : u64, num_records : usize, buffer : &mut [u8]) -> Result<usize, String>;
 }
 
 pub struct FileMftReader {
@@ -94,7 +94,7 @@ impl MftReader for FileMftReader {
         (self.get_mft_size_bytes() / MFT_RECORD_SIZE as i64) as usize
     }
 
-    fn read_records_into_buffer(&mut self, first_record_id : i64, _num_records : usize, buffer : &mut [u8]) -> Result<usize, String> {
+    fn read_records_into_buffer(&mut self, first_record_id : u64, _num_records : usize, buffer : &mut [u8]) -> Result<usize, String> {
         match self.mft_file.seek(SeekFrom::Start(first_record_id as u64 * MFT_RECORD_SIZE as u64)) {
             Ok(_) => {
                 match self.mft_file.read(buffer) {
@@ -127,7 +127,7 @@ impl MftReader for DirectVolumeMftReader {
         (self.get_mft_size_bytes() / MFT_RECORD_SIZE as i64) as usize
     }
 
-    fn read_records_into_buffer(&mut self, first_record_id : i64, num_records : usize, buffer : &mut [u8]) -> Result<usize, String> {
+    fn read_records_into_buffer(&mut self, first_record_id : u64, num_records : usize, buffer : &mut [u8]) -> Result<usize, String> {
         if !self.is_open {
             return Err("MFT was not opened!".to_owned())
         }
@@ -137,13 +137,13 @@ impl MftReader for DirectVolumeMftReader {
             return Err(format!("Requested {} records, but buffer of size {} can only fit {} records", num_records, buffer.len(), buffer_record_capacity))
         }
 
-        let max_requested_record_id = std::cmp::min(first_record_id + (num_records as i64), self.get_max_number_of_records() as i64);
+        let max_requested_record_id = std::cmp::min(first_record_id + (num_records as u64), self.get_max_number_of_records() as u64);
 
-        if max_requested_record_id > self.get_max_number_of_records() as i64 {
+        if max_requested_record_id > self.get_max_number_of_records() as u64{
             return Err(format!("Tried to request records beyond end of MFT, requested record {}, max is {}", max_requested_record_id, self.get_max_number_of_records()))
         }
 
-        self.mft_file_reader.read_file_bytes(first_record_id * MFT_RECORD_SIZE as i64, num_records * MFT_RECORD_SIZE, buffer, self.volume_handle)
+        self.mft_file_reader.read_file_bytes(first_record_id as i64 * MFT_RECORD_SIZE as i64, num_records * MFT_RECORD_SIZE, buffer, self.volume_handle)
     }
 }
 

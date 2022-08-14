@@ -7,8 +7,8 @@ use std::fmt::Display;
 use std::ops::Range;
 
 use ntfs_mft::direct_volume_reader;
-use ntfs_mft::common::{MFT_RECORD_SIZE, FORM_CODE_NONRESIDENT};
-use ntfs_mft::mft_types::{FileType as MftFileType, FileUsageStatus, MftStandardInformation, MftNonResidentFileData, MftAttribute };
+use ntfs_mft::common::{MFT_RECORD_SIZE, FORM_CODE_NONRESIDENT, ATTR_FILE_NAME, FORM_CODE_RESIDENT};
+use ntfs_mft::mft_types::{FileType as MftFileType, FileUsageStatus, MftStandardInformation, MftNonResidentAttribute, MftAttribute };
 use ntfs_mft::mft_parser::{MftRecord, MftRecordsChunkBuffer};
 
 use clap::{Parser, Subcommand};
@@ -58,7 +58,10 @@ enum Commands {
 
         /// The ID of the record to dump
         #[clap(value_parser)]
-        record_id: u64
+        record_id: u64,
+
+        #[clap(value_parser, short, long, default_value_t = true)]
+        resolve_parents: bool
     }
 }
 
@@ -73,8 +76,8 @@ fn main() {
         Commands::Info { target } => {
             info(target)
         },
-        Commands::DisplayRecord { target, record_id } => {
-            display_record(target, *record_id)
+        Commands::DisplayRecord { target, record_id, resolve_parents } => {
+            display_record(target, *record_id, *resolve_parents)
         }
     };
     
@@ -108,7 +111,7 @@ fn dump_raw(target : &String, output_file_name : &String, _ranges : &Option<Stri
 
     for record_index in (0..mft_reader.get_max_number_of_records()).step_by(buffer_size_in_records) {
         println!("Reading record {} / {}", record_index, mft_reader.get_max_number_of_records());
-        let records_read = mft_reader.read_records_into_buffer(record_index as i64, buffer_size_in_records, &mut buffer[..])?;
+        let records_read = mft_reader.read_records_into_buffer(record_index as u64, buffer_size_in_records, &mut buffer[..])?;
      
         err_typeify(output_file.write(&buffer[0..records_read]))?;
     }
@@ -152,7 +155,7 @@ impl MftInfo {
     }
 
     fn add_item(&mut self, mut item : Item) {
-        // Check for children and add their info if we have them        
+        // Check for children and add their info if we have them    
         if item.is_directory {
             if let Some(new_children) = self.unparented_items.remove(&item.id) {
                 for child_index in new_children {
@@ -265,7 +268,7 @@ fn info(target : &String) -> Result<(), String> {
 
     for record_index in (0..mft_reader.get_max_number_of_records()).step_by(buffer_size_in_records) {
         
-        let records_read = mft_reader.read_records_into_buffer(record_index as i64, buffer_size_in_records, &mut buffer[..])?;
+        let records_read = mft_reader.read_records_into_buffer(record_index as u64, buffer_size_in_records, &mut buffer[..])?;
 
         let mut record_buffer = MftRecordsChunkBuffer::new(&mut buffer[..], record_index as u64, records_read);
 
@@ -321,22 +324,21 @@ fn info(target : &String) -> Result<(), String> {
     Ok(())
 }
 
-fn display_record(target : &String, record_id : u64) -> Result<(), String> {
+fn display_record(target : &String, record_id : u64, resolve_parents : bool) -> Result<(), String> {
     let mut mft_reader = direct_volume_reader::create_mft_reader(target)?;
 
     let buffer_size_in_records : usize = MFT_RECORD_SIZE; // TODO: Make configurable
 
     let mut buffer = [0u8 ; MFT_RECORD_SIZE];
 
-    let records_read = mft_reader.read_records_into_buffer(record_id as i64, 1, &mut buffer[..])?;
+    let records_read = mft_reader.read_records_into_buffer(record_id, 1, &mut buffer[..])?;
 
     // TODO: Let this handle "None" properly
     let record = MftRecord::new(&mut buffer, record_id)?.unwrap();
 
     println!("Record: #{}       Base record ID: #{}", record_id, record.get_base_record_id());
-    println!("Entry type: {:?}  Usage status: {:?}", record.file_type, record.usage_status);
+    println!("Entry type: {:?}  Usage status: {:?}  Hard link count: {:?}", record.file_type, record.usage_status, record.get_hard_link_count());
     println!("Fixup okay: {}  Expected: {:#04x}  Replacements: {:#04x} @ offset 0x1FE, {:#04x} @ offset 0x3FE", record.fixup_okay, record.fixup_expected_value, record.fixup_replacement1, record.fixup_replacement2);
-
 
     println!("Attributes: ");
     // Iterate through the attributes and display info about them
@@ -370,21 +372,36 @@ fn display_record(target : &String, record_id : u64) -> Result<(), String> {
                 attr_type,
                 attr.get_data_slice().len(),
                 if attr.get_form_code() == FORM_CODE_NONRESIDENT { "non-resident" } else { "resident" });
+
+                if resolve_parents {
+                    if attr.get_attribute_type() == ATTR_FILE_NAME && attr.get_form_code() == FORM_CODE_RESIDENT {
+                        let file_name = MftFileNameInfo::new(attr.get_data_slice());
+                        let mut parent_buffer = [0u8 ; MFT_RECORD_SIZE];
     
+                        let mut full_path = file_name.get_file_name();
+                        full_path.insert(0, '\\');
+    
+                        let mut parent_id = file_name.get_parent_directory_id();
+    
+                        while parent_id != 5 {
+                            mft_reader.read_records_into_buffer(parent_id, 1, &mut parent_buffer)?;
+                            let parent_record = MftRecord::new(&mut parent_buffer, parent_id)?.unwrap();
+    
+                            let parent_file_name = parent_record.get_file_name_info().unwrap();
+                            full_path.insert_str(0, parent_file_name.get_file_name().as_str());
+                            full_path.insert(0, '\\');
+    
+                            parent_id = parent_file_name.get_parent_directory_id();
+                        }
+    
+                        println!("Full path: {}", full_path);
+                    }    
+                }
+
                 println!();
         
                 let mut ranges : Vec::<Range<usize>> = vec!();
-                let mut field_display_info : Vec<AttributeDisplayInfo> = vec!();
-                if attr.get_attribute_type() == 0x30 {
-                    let filename = MftFileNameInfo::new(attr.get_data_slice());
-                    field_display_info = filename.get_field_display_info();
-                } else if attr.get_attribute_type() == 0x10 {
-                    let stdinfo = MftStandardInformation::new(attr.get_data_slice());
-                    field_display_info = stdinfo.get_field_display_info();
-                } else if attr.get_attribute_type() == 0x80 && attr.get_form_code() == FORM_CODE_NONRESIDENT {
-                    let data = MftNonResidentFileData::new(attr.get_data_slice());
-                    field_display_info = data.get_field_display_info();
-                }
+                let field_display_info : Vec<AttributeDisplayInfo> = attr.get_display_info();
         
                 if field_display_info.len() > 0 {
                     for (index, f) in field_display_info.iter().enumerate() {
@@ -394,7 +411,7 @@ fn display_record(target : &String, record_id : u64) -> Result<(), String> {
                         } else {
                             println!("{:>25} : {}", f.name.bold(), range_string);
                         }    
-                        ranges.push(f.range.start..f.range.end); // Ugh
+                        ranges.push(f.range.start..f.range.end); // Ugh, can't copy??
                     }
         
                     if field_display_info.len() % 2 == 1 { 

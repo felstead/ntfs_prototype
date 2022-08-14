@@ -85,11 +85,27 @@ impl<'a> MftAttributeBuffer<'a> {
             &self.slice_data[ARH_RES_LENGTH..]
         }
     }
+
+    pub fn get_display_info(&self) -> Vec<AttributeDisplayInfo> {
+        if self.get_form_code() == FORM_CODE_NONRESIDENT {
+            MftNonResidentAttribute::new(self.slice_data).get_field_display_info()
+        } else {
+            match self.get_attribute_type() {
+                // TODO: Research a more "short-cut" like idiomatic way to do this
+                MftStandardInformation::ATTRIBUTE_TYPE_CODE => MftStandardInformation::new(self.get_data_slice()).get_field_display_info(),
+                MftFileNameInfo::ATTRIBUTE_TYPE_CODE => MftFileNameInfo::new(self.get_data_slice()).get_field_display_info(),
+                MftAttributeList::ATTRIBUTE_TYPE_CODE => MftAttributeList::new(self.get_data_slice()).get_field_display_info(),
+                MftResidentFileData::ATTRIBUTE_TYPE_CODE => MftResidentFileData::new(self.get_data_slice()).get_field_display_info(),
+                _ => vec!()
+            }
+        }
+    }
+
 }
 
 pub enum MftFileDataInfo<'a> {
     Resident(MftResidentFileData<'a>),
-    NonResident(MftNonResidentFileData<'a>)
+    NonResident(MftNonResidentAttribute<'a>)
 }
 
 impl<'a> MftFileDataInfo<'a> {
@@ -133,6 +149,8 @@ pub struct MftStandardInformation<'a> {
 
 #[allow(dead_code)]
 impl<'a> MftStandardInformation<'a> {
+    const ATTRIBUTE_TYPE_CODE : u32 = 0x10;
+
     // == STANDARD_INFORMATION offsets
     const SI_CREATE_TIMESTAMP : MftDataField<'a, FILETIME> = MftDataField::<FILETIME>::new( "CreatedTimestamp", 0x00);
     const SI_ALTERED_TIMESTAMP : MftDataField<'a, FILETIME> = MftDataField::<FILETIME>::new( "AlteredTimestamp", 0x08);
@@ -183,6 +201,8 @@ pub struct MftFileNameInfo <'a> {
 
 #[allow(dead_code)]
 impl<'a> MftFileNameInfo<'a> {
+    pub const ATTRIBUTE_TYPE_CODE : u32 = 0x30;
+
     // FILE_NAME offsets
     // From https://docs.microsoft.com/en-us/windows/win32/devnotes/file-name
     pub const FN_PARENT_DIR_REFERENCE_OFFSET : usize = 0;
@@ -204,7 +224,8 @@ impl<'a> MftFileNameInfo<'a> {
     const FN_FILE_NAME_LENGTH : MftDataField<'a, u8> = MftDataField::<u8>::new("FileNameLengthInChars", 0x40);
     const FN_FILE_NAME_NAMESPACE : MftDataField<'a, u8> = MftDataField::<u8>::new("Namespace", 0x41);
 
-    const FN_FILE_NAME : MftDataField<'a, &'a [u8]> = MftDataField::<&'a [u8]>::new_dynamic("FileNameData", 0x42, |slice| { MftFileNameInfo::FN_FILE_NAME_LENGTH.read(slice) as usize * 2 });
+    const FN_FILE_NAME : MftDataField<'a, &'a [u8]> = MftDataField::<&'a [u8]>::new_dynamic("FileNameData", 0x42, 
+        |slice| { Self::FN_FILE_NAME_LENGTH.read(slice) as usize * 2 });
 
     pub fn new(slice_data: &'a[u8]) -> Self {
         Self { slice_data }
@@ -212,12 +233,12 @@ impl<'a> MftFileNameInfo<'a> {
 
     pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
         vec!(
-            MftFileNameInfo::FN_PARENT_DIR_REFERENCE.get_display_info(self.slice_data),
-            MftFileNameInfo::FN_ALLOCATED_SIZE_OF_FILE.get_display_info(self.slice_data),
-            MftFileNameInfo::FN_REAL_SIZE_OF_FILE.get_display_info(self.slice_data),
-            MftFileNameInfo::FN_FILE_NAME_LENGTH.get_display_info(self.slice_data),
-            MftFileNameInfo::FN_FILE_NAME_NAMESPACE.get_display_info(self.slice_data),
-            MftFileNameInfo::FN_FILE_NAME.get_display_info(self.slice_data),
+            Self::FN_PARENT_DIR_REFERENCE.get_display_info(self.slice_data),
+            Self::FN_ALLOCATED_SIZE_OF_FILE.get_display_info(self.slice_data),
+            Self::FN_REAL_SIZE_OF_FILE.get_display_info(self.slice_data),
+            Self::FN_FILE_NAME_LENGTH.get_display_info(self.slice_data),
+            Self::FN_FILE_NAME_NAMESPACE.get_display_info(self.slice_data),
+            Self::FN_FILE_NAME.get_display_info(self.slice_data),
         )
     }
 
@@ -232,15 +253,15 @@ impl<'a> MftFileNameInfo<'a> {
 
     pub fn get_parent_directory_id(&self) -> u64 { 
         // Only the top 48 bits are the actual file reference
-        MftFileNameInfo::FN_PARENT_DIR_REFERENCE.read(self.slice_data).into()
+        Self::FN_PARENT_DIR_REFERENCE.read(self.slice_data).into()
         //LittleEndian::read_u48(&self.slice_data[MftFileNameInfo::FN_PARENT_DIR_REFERENCE_OFFSET..MftFileNameInfo::FN_PARENT_DIR_REFERENCE_OFFSET+6]) 
     }
 
-    pub fn get_allocated_size_of_file(&self) -> u64 { MftFileNameInfo::FN_ALLOCATED_SIZE_OF_FILE.read(self.slice_data) }
+    pub fn get_allocated_size_of_file(&self) -> u64 { Self::FN_ALLOCATED_SIZE_OF_FILE.read(self.slice_data) }
 
-    pub fn get_real_size_of_file(&self) -> u64 { MftFileNameInfo::FN_REAL_SIZE_OF_FILE.read(self.slice_data) }
+    pub fn get_real_size_of_file(&self) -> u64 { Self::FN_REAL_SIZE_OF_FILE.read(self.slice_data) }
 
-    pub fn get_namespace(&self) -> u8 { MftFileNameInfo::FN_FILE_NAME_NAMESPACE.read(self.slice_data) }
+    pub fn get_namespace(&self) -> u8 { Self::FN_FILE_NAME_NAMESPACE.read(self.slice_data) }
 }
 
 pub struct MftAttributeList <'a> {
@@ -248,8 +269,14 @@ pub struct MftAttributeList <'a> {
 }
 
 impl<'a> MftAttributeList <'a> {
+    pub const ATTRIBUTE_TYPE_CODE : u32 = 0x20;
+
     pub fn new(slice_data: &'a[u8]) -> Self {
         Self { slice_data }
+    }
+
+    pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
+        vec!()
     }
 
     pub fn iter(&'a self) -> MftAttributeListIterator<'a> {
@@ -318,25 +345,31 @@ pub struct MftResidentFileData <'a> {
 
 #[allow(dead_code)]
 impl<'a> MftResidentFileData<'a> {
+    const ATTRIBUTE_TYPE_CODE : u32 = 0x80;
+
     const RFD_FILE_SIZE_OFFSET : usize = 0;
 
     const RFD_FILE_SIZE : MftDataField<'a, u64> = MftDataField::<u64>::new("FileSize", 0x0);
 
+    pub fn new(slice_data: &'a[u8]) -> Self {
+        Self { slice_data }
+    }
+
     pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
         vec!(
-            MftResidentFileData::RFD_FILE_SIZE.get_display_info(self.slice_data)
+            Self::RFD_FILE_SIZE.get_display_info(self.slice_data)
         )
     }
 
     pub fn get_file_size(&self) -> u64 { MftResidentFileData::RFD_FILE_SIZE.read(self.slice_data) }
 }
 
-pub struct MftNonResidentFileData <'a> {
+pub struct MftNonResidentAttribute <'a> {
     slice_data : &'a[u8]
 }
 
 #[allow(dead_code)]
-impl<'a> MftNonResidentFileData<'a> {
+impl<'a> MftNonResidentAttribute<'a> {
     pub const NRFD_LOWEST_VCN_OFFSET : usize = 0;
     pub const NRFD_HIGHEST_VCN_OFFSET : usize = 8;
     pub const NRFD_MAPPING_PAIRS_OFFSET_OFFSET : usize = 16;
@@ -365,24 +398,24 @@ impl<'a> MftNonResidentFileData<'a> {
 
     pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
         vec!(
-            MftNonResidentFileData::NRFD_LOWEST_VCN.get_display_info(self.slice_data),
-            MftNonResidentFileData::NRFD_HIGHEST_VCN.get_display_info(self.slice_data),
-            MftNonResidentFileData::NRFD_MAPPING_PAIRS_OFFSET.get_display_info(self.slice_data),
-            MftNonResidentFileData::NRFD_ALLOCATED_LENGTH.get_display_info(self.slice_data),
-            MftNonResidentFileData::NRFD_FILE_SIZE.get_display_info(self.slice_data),
-            MftNonResidentFileData::NRFD_VALID_DATA_LENGTH.get_display_info(self.slice_data),
-            MftNonResidentFileData::NRFD_DATA_RUNS.get_display_info(self.slice_data),
+            Self::NRFD_LOWEST_VCN.get_display_info(self.slice_data),
+            Self::NRFD_HIGHEST_VCN.get_display_info(self.slice_data),
+            Self::NRFD_MAPPING_PAIRS_OFFSET.get_display_info(self.slice_data),
+            Self::NRFD_ALLOCATED_LENGTH.get_display_info(self.slice_data),
+            Self::NRFD_FILE_SIZE.get_display_info(self.slice_data),
+            Self::NRFD_VALID_DATA_LENGTH.get_display_info(self.slice_data),
+            Self::NRFD_DATA_RUNS.get_display_info(self.slice_data),
         )
     }
 
-    pub fn get_lowest_vcn(&self) -> u64 { MftNonResidentFileData::NRFD_LOWEST_VCN.read(self.slice_data) }
-    pub fn get_highest_vcn(&self) -> u64 { MftNonResidentFileData::NRFD_HIGHEST_VCN.read(self.slice_data) }
+    pub fn get_lowest_vcn(&self) -> u64 { MftNonResidentAttribute::NRFD_LOWEST_VCN.read(self.slice_data) }
+    pub fn get_highest_vcn(&self) -> u64 { MftNonResidentAttribute::NRFD_HIGHEST_VCN.read(self.slice_data) }
 
-    pub fn get_mapping_pairs_offset(&self) -> u16 { MftNonResidentFileData::NRFD_MAPPING_PAIRS_OFFSET.read(self.slice_data) }
+    pub fn get_mapping_pairs_offset(&self) -> u16 { MftNonResidentAttribute::NRFD_MAPPING_PAIRS_OFFSET.read(self.slice_data) }
 
-    pub fn get_allocated_length(&self) -> u64 { MftNonResidentFileData::NRFD_ALLOCATED_LENGTH.read(self.slice_data) }
-    pub fn get_file_size(&self) -> u64 { MftNonResidentFileData::NRFD_FILE_SIZE.read(self.slice_data) }
-    pub fn get_valid_data_length(&self) -> u64 { MftNonResidentFileData::NRFD_VALID_DATA_LENGTH.read(self.slice_data) }
+    pub fn get_allocated_length(&self) -> u64 { MftNonResidentAttribute::NRFD_ALLOCATED_LENGTH.read(self.slice_data) }
+    pub fn get_file_size(&self) -> u64 { MftNonResidentAttribute::NRFD_FILE_SIZE.read(self.slice_data) }
+    pub fn get_valid_data_length(&self) -> u64 { MftNonResidentAttribute::NRFD_VALID_DATA_LENGTH.read(self.slice_data) }
 
     pub fn get_direct_file_reader(&self, bytes_per_cluster : usize) -> Result<NtfsFileReader, String> {
         let mut run_offset = self.get_mapping_pairs_offset() as usize - ARH_NONRES_START_OFFSET;

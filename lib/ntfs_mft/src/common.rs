@@ -16,7 +16,7 @@ pub const FILE_RECORD_FLAG_DELETED_DIR : u16 = 0x02;
 pub const FILE_RECORD_FLAG_EXISTING_DIR : u16 = 0x03;
 
 // Attribute form code
-pub const _FORM_CODE_RESIDENT : u8 = 0x0;
+pub const FORM_CODE_RESIDENT : u8 = 0x0;
 pub const FORM_CODE_NONRESIDENT : u8 = 0x1;
 
 // Offsets into the ATTRIBUTE_RECORD_HEADER structure

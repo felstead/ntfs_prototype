@@ -41,7 +41,7 @@ impl<'a, T : SliceReadable<'a, T>> MftDataField<'a, T> {
     }
 
     pub fn get_display_info(&self, slice : &'a [u8]) -> AttributeDisplayInfo {
-        AttributeDisplayInfo { name:  self.name, range: self.get_range(slice) }
+        AttributeDisplayInfo { name: self.name, range: self.get_range(slice) }
     }
 
     pub const fn new(name : &'static str, offset : usize) -> Self {
