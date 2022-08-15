@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 byteorder = "1"
+chrono = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 is_elevated = "0.1.2"

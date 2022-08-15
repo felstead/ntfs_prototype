@@ -1,4 +1,4 @@
-use windows_sys::Win32::Foundation::FILETIME;
+use chrono::NaiveDateTime;
 use byteorder::*;
 
 use crate::common::*;
@@ -26,7 +26,7 @@ impl<'a> MftAttribute<'a> {
 pub struct MftAttributeReference {
     attribute_type : u32,
     record_id : u64,
-    record_seq_id : u16
+    _record_seq_id : u16
 }
 
 impl MftAttributeReference { 
@@ -34,7 +34,7 @@ impl MftAttributeReference {
         MftAttributeReference {
             attribute_type: list_entry.get_attribute_type(),
             record_id: list_entry.get_record_id(),
-            record_seq_id: list_entry.get_record_seq_id()
+            _record_seq_id: list_entry.get_record_seq_id()
         }
     }
 
@@ -86,7 +86,7 @@ impl<'a> MftAttributeBuffer<'a> {
         }
     }
 
-    pub fn get_display_info(&self) -> Vec<AttributeDisplayInfo> {
+    pub fn get_display_info(&self) -> Vec<FieldDisplayInfo> {
         if self.get_form_code() == FORM_CODE_NONRESIDENT {
             MftNonResidentAttribute::new(self.slice_data).get_field_display_info()
         } else {
@@ -131,15 +131,15 @@ impl Default for FileUsageStatus {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum FileType {
+pub enum MftFileType {
     Unknown,
     File,
     Directory
 }
 
-impl Default for FileType {
+impl Default for MftFileType {
     fn default() -> Self {
-        FileType::Unknown
+        MftFileType::Unknown
     }
 }
 
@@ -152,10 +152,10 @@ impl<'a> MftStandardInformation<'a> {
     const ATTRIBUTE_TYPE_CODE : u32 = 0x10;
 
     // == STANDARD_INFORMATION offsets
-    const SI_CREATE_TIMESTAMP : MftDataField<'a, FILETIME> = MftDataField::<FILETIME>::new( "CreatedTimestamp", 0x00);
-    const SI_ALTERED_TIMESTAMP : MftDataField<'a, FILETIME> = MftDataField::<FILETIME>::new( "AlteredTimestamp", 0x08);
-    const SI_MFT_CHANGED_TIMESTAMP : MftDataField<'a, FILETIME> = MftDataField::<FILETIME>::new( "ChangedTimestamp", 0x10);
-    const SI_READ_TIMESTAMP : MftDataField<'a, FILETIME> = MftDataField::<FILETIME>::new( "ReadTimestamp", 0x18);
+    const SI_CREATE_TIMESTAMP : MftDataField<'a, NaiveDateTime> = MftDataField::<NaiveDateTime>::new( "CreatedTimestamp", 0x00);
+    const SI_ALTERED_TIMESTAMP : MftDataField<'a, NaiveDateTime> = MftDataField::<NaiveDateTime>::new( "AlteredTimestamp", 0x08);
+    const SI_MFT_CHANGED_TIMESTAMP : MftDataField<'a, NaiveDateTime> = MftDataField::<NaiveDateTime>::new( "ChangedTimestamp", 0x10);
+    const SI_READ_TIMESTAMP : MftDataField<'a, NaiveDateTime> = MftDataField::<NaiveDateTime>::new( "ReadTimestamp", 0x18);
     const SI_PERMISSIONS : MftDataField<'a, u32> = MftDataField::<u32>::new( "Permissions", 0x20);
     const SI_MAX_VERSIONS : MftDataField<'a, u32> = MftDataField::<u32>::new( "MaxVersions", 0x24);
     const SI_VERSION_NUMBER : MftDataField<'a, u32> = MftDataField::<u32>::new( "VersionNumber", 0x28);
@@ -169,7 +169,7 @@ impl<'a> MftStandardInformation<'a> {
         Self { slice_data }
     }
 
-    pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
+    pub fn get_field_display_info(&self) -> Vec<FieldDisplayInfo> {
         vec!(
             Self::SI_CREATE_TIMESTAMP.get_display_info(self.slice_data),
             Self::SI_ALTERED_TIMESTAMP.get_display_info(self.slice_data),
@@ -186,10 +186,10 @@ impl<'a> MftStandardInformation<'a> {
         )
     }
 
-    pub fn get_create_timestamp(&self) -> FILETIME { Self::SI_CREATE_TIMESTAMP.read(self.slice_data) }
-    pub fn get_altered_timestamp(&self) -> FILETIME { Self::SI_ALTERED_TIMESTAMP.read(self.slice_data) }
-    pub fn get_mft_changed_timestamp(&self) -> FILETIME { Self::SI_MFT_CHANGED_TIMESTAMP.read(self.slice_data) }
-    pub fn get_read_timestamp(&self) -> FILETIME { Self::SI_READ_TIMESTAMP.read(self.slice_data) }
+    pub fn get_create_timestamp(&self) -> NaiveDateTime { Self::SI_CREATE_TIMESTAMP.read(self.slice_data) }
+    pub fn get_altered_timestamp(&self) -> NaiveDateTime { Self::SI_ALTERED_TIMESTAMP.read(self.slice_data) }
+    pub fn get_mft_changed_timestamp(&self) -> NaiveDateTime { Self::SI_MFT_CHANGED_TIMESTAMP.read(self.slice_data) }
+    pub fn get_read_timestamp(&self) -> NaiveDateTime { Self::SI_READ_TIMESTAMP.read(self.slice_data) }
 
     pub fn get_permissions(&self) -> u32 { Self::SI_PERMISSIONS.read(self.slice_data) }
 }
@@ -231,7 +231,7 @@ impl<'a> MftFileNameInfo<'a> {
         Self { slice_data }
     }
 
-    pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
+    pub fn get_field_display_info(&self) -> Vec<FieldDisplayInfo> {
         vec!(
             Self::FN_PARENT_DIR_REFERENCE.get_display_info(self.slice_data),
             Self::FN_ALLOCATED_SIZE_OF_FILE.get_display_info(self.slice_data),
@@ -275,7 +275,7 @@ impl<'a> MftAttributeList <'a> {
         Self { slice_data }
     }
 
-    pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
+    pub fn get_field_display_info(&self) -> Vec<FieldDisplayInfo> {
         vec!()
     }
 
@@ -355,7 +355,7 @@ impl<'a> MftResidentFileData<'a> {
         Self { slice_data }
     }
 
-    pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
+    pub fn get_field_display_info(&self) -> Vec<FieldDisplayInfo> {
         vec!(
             Self::RFD_FILE_SIZE.get_display_info(self.slice_data)
         )
@@ -396,7 +396,7 @@ impl<'a> MftNonResidentAttribute<'a> {
         Self { slice_data }
     }
 
-    pub fn get_field_display_info(&self) -> Vec<AttributeDisplayInfo> {
+    pub fn get_field_display_info(&self) -> Vec<FieldDisplayInfo> {
         vec!(
             Self::NRFD_LOWEST_VCN.get_display_info(self.slice_data),
             Self::NRFD_HIGHEST_VCN.get_display_info(self.slice_data),

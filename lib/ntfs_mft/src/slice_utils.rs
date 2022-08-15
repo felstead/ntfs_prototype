@@ -1,9 +1,10 @@
 
+use chrono::{NaiveDate, NaiveDateTime, Duration};
 use byteorder::*;
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::mem::size_of;
-use std::ops::Range;
-use windows_sys::Win32::Foundation::FILETIME;
+use std::ops::{Range, Add};
 
 pub struct MftDataField<'a, T : SliceReadable<'a, T>> {
     name : &'static str,
@@ -12,12 +13,13 @@ pub struct MftDataField<'a, T : SliceReadable<'a, T>> {
     phantom : PhantomData<T>
 }
 
-pub struct AttributeDisplayInfo {
+pub struct FieldDisplayInfo {
     pub name : &'static str,
-    pub range : Range<usize>
+    pub range : Range<usize>,
+    pub display_string : String
 }
 
-impl<'a, T : SliceReadable<'a, T>> MftDataField<'a, T> {
+impl<'a, T : SliceReadable<'a, T> + Debug> MftDataField<'a, T> {
     pub fn read(&self, slice : &'a [u8]) -> T {
         if self.get_size(slice) + self.offset > slice.len() {
             panic!("Tried to read outside of slice range: {} from slice of size {}", self.get_size(slice) + self.offset, slice.len());
@@ -28,7 +30,7 @@ impl<'a, T : SliceReadable<'a, T>> MftDataField<'a, T> {
     pub fn get_size(&self, slice : &'a [u8]) -> usize {
         match self.dynamic_size {
             Some(dynamic_size) => dynamic_size(&slice),
-            None => size_of::<T>()
+            None => T::get_size()
         }
     }
 
@@ -40,8 +42,8 @@ impl<'a, T : SliceReadable<'a, T>> MftDataField<'a, T> {
         self.name
     }
 
-    pub fn get_display_info(&self, slice : &'a [u8]) -> AttributeDisplayInfo {
-        AttributeDisplayInfo { name: self.name, range: self.get_range(slice) }
+    pub fn get_display_info(&self, slice : &'a [u8]) -> FieldDisplayInfo {
+        FieldDisplayInfo { name: self.name, range: self.get_range(slice), display_string: format!("{:?}", self.read(slice) ) }
     }
 
     pub const fn new(name : &'static str, offset : usize) -> Self {
@@ -56,6 +58,7 @@ impl<'a, T : SliceReadable<'a, T>> MftDataField<'a, T> {
 // Slice readable types
 pub trait SliceReadable<'a, T> {
     fn read(slice : &'a [u8], offset : usize, size : usize) -> T;
+    fn get_size() -> usize { size_of::<T>() }
 }
 
 impl<'a> SliceReadable<'a, u64> for u64 {
@@ -88,39 +91,40 @@ impl<'a> SliceReadable<'a, &'a [u16]> for &'a [u16] {
 }
 
 // FILETIME
-impl<'a> SliceReadable<'a, FILETIME> for FILETIME {
-    fn read(slice : &[u8], offset : usize, _size : usize) -> FILETIME { 
-        FILETIME { 
-            dwLowDateTime : LittleEndian::read_u32(&slice[offset..offset+4]), 
-            dwHighDateTime : LittleEndian::read_u32(&slice[offset+4..offset+8])
-        }
+impl<'a> SliceReadable<'a, NaiveDateTime> for NaiveDateTime {
+    fn read(slice : &[u8], offset : usize, _size : usize) -> NaiveDateTime { 
+        // Windows FILETIME is specified as the number of 100ns increments since 1601/01/01 00:00:00
+        let epoch : NaiveDateTime = NaiveDate::from_ymd(1601, 1, 1).and_hms(0, 0, 0);
+        let dt_part = LittleEndian::read_i64(&slice[offset..offset+8]);
+        
+        // We divide by 10 to get from 100ns increments to microseconds. Using ns directly will overflow a 64 bit int.
+        epoch.add(Duration::microseconds(dt_part / 10))
+    }
+
+    // Need to specially override for this time since the return type size and the input size differ
+    fn get_size() -> usize {
+        size_of::<i64>()
     }
 }
 
 // Special shenanigans for our u48
 #[allow(non_camel_case_types)]
-pub struct u48 ( [u8 ; 6] );
-
-impl u48 {
-    pub fn is_zero(&self) -> bool {
-        return self.0 == [0u8;6]
-    }
-}
+#[derive(Debug)]
+pub struct u48 ( u64 );
 
 impl From<&[u8]> for u48 {
     fn from(slice: &[u8]) -> Self {
-        let mut val = u48([0u8;6]);
-        val.0.copy_from_slice(&slice[0..6]);
-        val
+        u48 ( LittleEndian::read_u48(&slice[0..6]))
     }
 }
 
 impl Into<u64> for u48 {
     fn into(self) -> u64 {
-        LittleEndian::read_u48(&self.0)
+        self.0
     }
 }
 
 impl<'a> SliceReadable<'a, u48> for u48 {
     fn read(slice : &[u8], offset : usize, size : usize) -> u48 { u48::from(&slice[offset..offset+size]) }
+    fn get_size() -> usize { 6 }
 }

@@ -6,7 +6,7 @@ use crate::slice_utils::*;
 #[derive(Default)]
 pub struct MftRecord<'a> {
     pub id : u64,
-    pub file_type : FileType,
+    pub file_type : MftFileType,
     pub usage_status : FileUsageStatus,
     pub fixup_okay : bool,
     pub fixup_expected_value : u16,
@@ -18,6 +18,7 @@ pub struct MftRecord<'a> {
     attribute_count : usize,
 }
 
+#[allow(dead_code)]
 impl<'a> MftRecord<'a> {
 
     const MR_SIGNATURE : MftDataField<'a, u32> = MftDataField::<u32>::new("Signature", 0x00);
@@ -77,9 +78,9 @@ impl<'a> MftRecord<'a> {
             };
 
             let file_type = match flags {
-                FILE_RECORD_FLAG_DELETED_DIR | FILE_RECORD_FLAG_EXISTING_DIR => FileType::Directory,
-                FILE_RECORD_FLAG_DELETED_FILE | FILE_RECORD_FLAG_EXISTING_FILE => FileType::File,
-                _ => FileType::Unknown
+                FILE_RECORD_FLAG_DELETED_DIR | FILE_RECORD_FLAG_EXISTING_DIR => MftFileType::Directory,
+                FILE_RECORD_FLAG_DELETED_FILE | FILE_RECORD_FLAG_EXISTING_FILE => MftFileType::File,
+                _ => MftFileType::Unknown
             };
 
             let mut mft_record = MftRecord {
