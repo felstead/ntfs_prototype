@@ -10,7 +10,7 @@ use ntfs_mft::slice_utils::*;
 use colored::*;
 use encoding_rs::{WINDOWS_1252};
 
-pub fn display_record(target : &String, record_id : u64, resolve_parents : bool) -> Result<(), String> {
+pub fn display_record(target : &str, record_id : u64, resolve_parents : bool) -> Result<(), String> {
     let mut mft_reader = direct_volume_reader::create_mft_reader(target)?;
 
     let mut buffer = [0u8 ; MFT_RECORD_SIZE];
@@ -57,37 +57,35 @@ pub fn display_record(target : &String, record_id : u64, resolve_parents : bool)
                 attr.get_data_slice().len(),
                 if attr.get_form_code() == FORM_CODE_NONRESIDENT { "non-resident" } else { "resident" });
 
-                if resolve_parents {
-                    if attr.get_attribute_type() == ATTR_FILE_NAME && attr.get_form_code() == FORM_CODE_RESIDENT {
-                        let file_name = MftFileNameInfo::new(attr.get_data_slice());
-                        let mut parent_buffer = [0u8 ; MFT_RECORD_SIZE];
-    
-                        let mut full_path = file_name.get_file_name();
+                if resolve_parents && attr.get_attribute_type() == ATTR_FILE_NAME && attr.get_form_code() == FORM_CODE_RESIDENT {
+                    let file_name = MftFileNameInfo::new(attr.get_data_slice());
+                    let mut parent_buffer = [0u8 ; MFT_RECORD_SIZE];
+
+                    let mut full_path = file_name.get_file_name();
+                    full_path.insert(0, '\\');
+
+                    let mut parent_id = file_name.get_parent_directory_id();
+
+                    while parent_id != 5 {
+                        mft_reader.read_records_into_buffer(parent_id, 1, &mut parent_buffer)?;
+                        let parent_record = MftRecord::new(&mut parent_buffer, parent_id)?.unwrap();
+
+                        let parent_file_name = parent_record.get_file_name_info().unwrap();
+                        full_path.insert_str(0, parent_file_name.get_file_name().as_str());
                         full_path.insert(0, '\\');
-    
-                        let mut parent_id = file_name.get_parent_directory_id();
-    
-                        while parent_id != 5 {
-                            mft_reader.read_records_into_buffer(parent_id, 1, &mut parent_buffer)?;
-                            let parent_record = MftRecord::new(&mut parent_buffer, parent_id)?.unwrap();
-    
-                            let parent_file_name = parent_record.get_file_name_info().unwrap();
-                            full_path.insert_str(0, parent_file_name.get_file_name().as_str());
-                            full_path.insert(0, '\\');
-    
-                            parent_id = parent_file_name.get_parent_directory_id();
-                        }
-    
-                        println!("Full path: {}", full_path);
-                    }    
-                }
+
+                        parent_id = parent_file_name.get_parent_directory_id();
+                    }
+
+                    println!("Full path: {}", full_path);
+                }    
 
                 println!();
         
                 let mut ranges : Vec::<Range<usize>> = vec!();
                 let field_display_info : Vec<FieldDisplayInfo> = attr.get_display_info();
         
-                if field_display_info.len() > 0 {
+                if !field_display_info.is_empty() {
                     for (index, f) in field_display_info.iter().enumerate() {
                         let range_string = format!("0x{:02x}-0x{:02x}", f.range.start, f.range.end - 1).on_color(PALETTE[index]).color(Color::Black);
                         if index % 2 == 0 {
@@ -120,7 +118,7 @@ pub fn display_record(target : &String, record_id : u64, resolve_parents : bool)
     Ok(())
 }
 
-fn index_for_range(offset : usize, ranges : &Vec<Range<usize>>) -> Option<usize> {
+fn index_for_range(offset : usize, ranges : &[Range<usize>]) -> Option<usize> {
     for (index, range) in ranges.iter().enumerate() {
         if range.contains(&offset) {
             //println!("{:02x} in {:02x}-{:02x} ({})", offset, range.start, range.end, index);
@@ -154,7 +152,7 @@ const PALETTE : [Color ; 20] = [
     Color::TrueColor { r: 158, g: 218, b: 229 },
     Color::TrueColor { r: 23, g: 190, b: 207 }];
 
-fn hexdump(slice : &[u8], column_count : usize, indent : usize, ranges : &Vec<Range<usize>>) {
+fn hexdump(slice : &[u8], column_count : usize, indent : usize, ranges : &[Range<usize>]) {
 
     let header : Vec<String> = (0..column_count).map(|col| format!("{:02x}", col)).collect();
     println!("{:indent$}     {}", "", header.join(" ").bold());
@@ -196,6 +194,6 @@ fn u8_to_char(byte : u8) -> char {
         0x20..=0x7E => byte as char,
         0x7F => '␡',
         0x81 | 0x8D | 0x8F | 0x90 | 0x9D => '�',
-        0x80 | _ => WINDOWS_1252.decode_without_bom_handling_and_without_replacement(&[byte ; 1]).unwrap().chars().nth(0).unwrap()
+        _ => WINDOWS_1252.decode_without_bom_handling_and_without_replacement(&[byte ; 1]).unwrap().chars().next().unwrap()
     }
 }

@@ -81,7 +81,6 @@ fn main() {
     }
 
     println!("Execution time: {:?}", start.elapsed());
-    return;
 }
 
 fn err_typeify<T, E : Display>(result : Result<T, E>) -> Result<T, String> {
@@ -218,7 +217,7 @@ impl Item {
                 return Some(Item {
                     id : mft_record.id,
                     parent_id : file_name.get_parent_directory_id(),
-                    name : file_name.get_file_name().to_owned(),
+                    name : file_name.get_file_name(),
                     is_directory : mft_record.file_type == MftFileType::Directory,
                     sub_item_indexes : vec!(),
                     sub_items_size : 0,
@@ -228,7 +227,7 @@ impl Item {
             }
         }
 
-        return None;
+        None
     }
 
     fn add_child(&mut self, child : &Item, child_index : usize, is_direct_parent : bool) {
@@ -244,7 +243,7 @@ impl Item {
     }
 
     fn get_total_size(&self) -> u64 {
-        return self.self_size + self.sub_items_size;
+        self.self_size + self.sub_items_size
     }
 
     fn get_total_count(&self) -> u64 {
@@ -252,7 +251,7 @@ impl Item {
     }
  }
 
-fn info(target : &String) -> Result<(), String> {
+fn info(target : &str) -> Result<(), String> {
     let mut mft_reader = direct_volume_reader::create_mft_reader(target)?;
 
     let buffer_size_in_records : usize = 32768; // TODO: Make configurable
