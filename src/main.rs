@@ -1,8 +1,9 @@
 
-use std::io::Write;
+use std::io::{Write, Read};
 use std::time::{Instant};
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::fs::File;
 
 use ntfs_mft::direct_volume_reader;
 use ntfs_mft::common::*;
@@ -39,6 +40,16 @@ enum Commands {
         #[clap(long, value_parser)]
         ranges: Option<String>,
     },
+    /// Extracts the binaries of a full live volume and dumps it (in its original binary format) to a file
+    /// Requires running as Administrator on Windows
+    DumpVolume {
+        /// The target volume to dump the MFT from, e.g. C:, D:, or on linux, /dev/sda, etc
+        #[clap(value_parser)]
+        target: String,
+        /// The output file to write to, defaults to "volume.bin" 
+        #[clap(value_parser, default_value_t = String::from("volume.bin"))]
+        output_file: String,
+    },
     /// Displays information about the MFT
     Info {
         /// The target volume or file to read.
@@ -68,6 +79,9 @@ fn main() {
         Commands::DumpRaw { target, output_file, ranges } => {
             dump_raw(target, output_file, ranges)
         },
+        Commands::DumpVolume { target, output_file } => {
+            dump_full_volume(target, output_file)
+        }
         Commands::Info { target } => {
             info(target)
         },
@@ -110,6 +124,32 @@ fn dump_raw(target : &String, output_file_name : &String, _ranges : &Option<Stri
         err_typeify(output_file.write(&buffer[0..records_read]))?;
     }
     println!("Done!");
+
+    Ok(())
+}
+
+fn dump_full_volume(target : &String, output_file_name : &String) -> Result<(), String> {
+    // TODO: Validate
+    
+    let mut volume_handle = err_typeify(File::open(format!("\\\\.\\{target}")))?;
+
+    let mut output_file = err_typeify(std::fs::File::create(output_file_name))?;
+
+    let mut buffer = vec![0_u8; 32 * 1024 * 1024].into_boxed_slice();
+
+    let mut total_bytes_read : u64 = 0;
+
+    loop {
+        let read_bytes = err_typeify(volume_handle.read(&mut buffer))?;
+
+        total_bytes_read += read_bytes as u64;
+
+        if read_bytes == 0 { break }
+
+        err_typeify(output_file.write(&buffer[0..read_bytes]))?;
+
+        println!("Dumped {total_bytes_read} bytes")
+    }
 
     Ok(())
 }

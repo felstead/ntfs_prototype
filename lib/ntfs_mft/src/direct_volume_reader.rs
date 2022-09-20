@@ -67,6 +67,19 @@ pub struct FileMftReader {
 
 impl FileMftReader {
     pub fn new(file_name : &str) -> Result<Box<FileMftReader>, String> {
+/*
+        let volume_path_cstr = CString::new(file_name.as_bytes()).unwrap();
+        let handle = unsafe { CreateFileA(
+            volume_path_cstr.as_ptr() as *const u8,
+            FILE_GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, // This actually means other processes CAN read and write the file, i.e. not exclusive locking
+            std::ptr::null(),
+            OPEN_EXISTING,
+            0,
+            0
+        ) };
+
+        let file = unsafe { File::from_raw_handle(handle as *mut c_void) };*/
         let file = match File::open(file_name) {
             Ok(file) => {
                 file

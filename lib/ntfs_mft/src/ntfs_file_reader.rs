@@ -91,37 +91,39 @@ impl NtfsFileReader {
         }
 
         self.iterate_physical_blocks_for_file(file_relative_offset, num_bytes, |buffer_offset, physical_read_range| {
-            let read_offset = physical_read_range.start;
-            let mut overlapped  = OVERLAPPED {
-                Anonymous: OVERLAPPED_0 {
-                    Anonymous: OVERLAPPED_0_0 {
-                        Offset: read_offset as u32,
-                        OffsetHigh: (read_offset >> 32) as u32
-                    },
-                },
-                hEvent: 0,
-                Internal: 0,
-                InternalHigh: 0,
-            };
-
-            let read_result = unsafe {
-                ReadFile(
-                    volume_handle,
-                    buffer[buffer_offset as usize..].as_mut_ptr() as *mut c_void,
-                    (buffer.len() - buffer_offset as usize) as u32,
-                    std::ptr::null_mut(),
-                    std::ptr::addr_of_mut!(overlapped)
-                )
-            };
-    
-            if read_result == 0 {
-                return Err(format!("ReadFile error: {:#x}", unsafe { GetLastError() }));
-            }
-
-            Ok(physical_read_range.end as usize - physical_read_range.start as usize)
+            self.read_volume_bytes_direct(physical_read_range.start, num_bytes, &mut buffer[buffer_offset as usize..], volume_handle)
         }) // result
     }
 
+    pub fn read_volume_bytes_direct(&self, read_offset : i64, num_bytes : usize, buffer : &mut [u8], volume_handle: HANDLE) -> Result<usize, String> {
+        let mut overlapped  = OVERLAPPED {
+            Anonymous: OVERLAPPED_0 {
+                Anonymous: OVERLAPPED_0_0 {
+                    Offset: read_offset as u32,
+                    OffsetHigh: (read_offset >> 32) as u32
+                },
+            },
+            hEvent: 0,
+            Internal: 0,
+            InternalHigh: 0,
+        };
+
+        let read_result = unsafe {
+            ReadFile(
+                volume_handle,
+                buffer.as_mut_ptr() as *mut c_void,
+                (num_bytes) as u32,
+                std::ptr::null_mut(),
+                std::ptr::addr_of_mut!(overlapped)
+            )
+        };
+
+        if read_result == 0 {
+            return Err(format!("ReadFile error: {:#x}", unsafe { GetLastError() }));
+        }
+
+        Ok(num_bytes)
+    }
 
 }
 
