@@ -27,7 +27,7 @@ struct Cli {
 enum Commands {
     /// Extracts an MFT from a live volume and dumps it (in its original binary format) to a file.
     /// Requires running as Administrator
-    DumpRaw {
+    DumpMft {
         /// The target volume to dump the MFT from, e.g. C:, D:, etc
         #[clap(value_parser)]
         target: String,
@@ -42,7 +42,7 @@ enum Commands {
     },
     /// Extracts the binaries of a full live volume and dumps it (in its original binary format) to a file
     /// Requires running as Administrator on Windows
-    DumpVolume {
+    DumpFullVolume {
         /// The target volume to dump the MFT from, e.g. C:, D:, or on linux, /dev/sda, etc
         #[clap(value_parser)]
         target: String,
@@ -76,10 +76,10 @@ fn main() {
 
     let start = Instant::now();
     let result = match &cli.command {
-        Commands::DumpRaw { target, output_file, ranges } => {
+        Commands::DumpMft { target, output_file, ranges } => {
             dump_raw(target, output_file, ranges)
         },
-        Commands::DumpVolume { target, output_file } => {
+        Commands::DumpFullVolume { target, output_file } => {
             dump_full_volume(target, output_file)
         }
         Commands::Info { target } => {

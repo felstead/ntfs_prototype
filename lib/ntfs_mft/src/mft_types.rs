@@ -87,7 +87,9 @@ impl<'a> MftAttributeBuffer<'a> {
     }
 
     pub fn get_display_info(&self) -> Vec<FieldDisplayInfo> {
-        if self.get_form_code() == FORM_CODE_NONRESIDENT {
+        if self.get_data_slice().len() == 0 {
+            vec!()
+        } else if self.get_form_code() == FORM_CODE_NONRESIDENT {
             MftNonResidentAttribute::new(self.slice_data).get_field_display_info()
         } else {
             match self.get_attribute_type() {

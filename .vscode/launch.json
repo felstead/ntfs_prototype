@@ -45,6 +45,25 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug executable 'ntfs-mft-utils' with live MFT dump",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=ntfs-mft-utils",
+                    "--package=ntfs-mft-utils"
+                ],
+                "filter": {
+                    "name": "ntfs-mft-utils",
+                    "kind": "bin"
+                }
+            },
+            //"args": ["info", "c:\\temp\\mft.dat"],
+            "args": ["dump-mft", "c:", "d:\\TestVolumes\\c_drive_private.mft"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug unit tests in executable 'ntfs-mft-utils'",
             "cargo": {
                 "args": [

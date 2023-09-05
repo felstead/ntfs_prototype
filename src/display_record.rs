@@ -101,8 +101,10 @@ pub fn display_record(target : &str, record_id : u64, resolve_parents : bool) ->
                     }
                 }
         
-                println!();
-                hexdump(attr.get_data_slice(), 16, 4, &ranges);    
+                if attr.get_data_slice().len() > 0 {
+                    println!();
+                    hexdump(attr.get_data_slice(), 16, 4, &ranges);
+                }
             },
             MftAttribute::Extension(attr_ref) => {
                 println!("== {:#x} ({}), present in extension record: #{}", 
